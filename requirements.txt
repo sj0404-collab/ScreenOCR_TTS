@@ -1,0 +1,32 @@
+# Screen OCR + TTS зависимости
+# Версия: 2.4 - Removed Piper, added Voice Changer
+
+# GUI
+PyQt6>=6.4.0
+# Встроенное окно браузера для live-озвучки (Web Speech API)
+PyQt6-WebEngine>=6.4.0
+
+# OCR
+easyocr>=1.7.0
+rapidocr-onnxruntime>=1.2.0
+opencv-python-headless>=4.8.0
+mss>=9.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# TTS
+edge-tts>=6.1.0
+requests>=2.28.0
+pywin32>=306; sys_platform == 'win32'
+torch>=2.0.0
+scipy>=1.10.0
+onnxruntime>=1.16.0
+
+# Voice Changer (pitch/speed)
+pydub>=0.25.0
+
+# Глобальные горячие клавиши (безопасная замена keyboard)
+pynput>=1.7.0
+
+# Коррекция орфографии для английских слов (постобработка OCR)
+pyspellchecker>=0.7.0
