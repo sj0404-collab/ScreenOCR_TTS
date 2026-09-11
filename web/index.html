@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<title>ScreenOCR TTS Pro</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#e6edf3;
+  --muted:#8b949e; --accent:#7b68ee; --accent2:#58a6ff; --ok:#3fb950; --err:#f85149;
+  --warn:#d29922;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;padding:16px 12px 80px}
+h1{font-size:18px;display:flex;align-items:center;gap:10px}
+h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);animation:pulse 2s infinite}
+h1 .dot.on{background:var(--ok);animation:none}
+h1 .dot.wait{background:var(--warn);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.25}}
+.sub{margin-top:4px;color:var(--muted);font-size:12px;line-height:1.5}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;margin-top:14px}
+.card h2{font-size:14px;color:var(--accent2);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card h2 .tag{margin-left:auto;font-size:11px;color:var(--muted);font-weight:400;cursor:pointer}
+.tabs{display:flex;gap:8px;margin-top:14px}
+.tabs button{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--muted);
+  padding:11px 0;border-radius:10px;font-size:13px;cursor:pointer;transition:.15s}
+.tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.panel{display:none}
+.panel.active{display:block;animation:fade .2s}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
+textarea,input,select{width:100%;background:#0d1117;border:1px solid var(--border);color:var(--text);
+  border-radius:10px;padding:12px;font-size:14px;font-family:inherit}
+textarea{min-height:110px;resize:vertical}
+select{padding:12px;appearance:none}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:var(--accent);
+  color:#fff;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:600;
+  cursor:pointer;margin-top:12px;transition:.15s}
+.btn:active{transform:scale(.98)}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);font-weight:500}
+.btn.small{width:auto;padding:8px 14px;font-size:12px;margin:0}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.photo{position:relative;border:2px dashed var(--border);border-radius:12px;padding:8px;margin-top:4px}
+.photo img{width:100%;max-height:220px;object-fit:contain;border-radius:8px;display:none}
+.photo.has img{display:block}
+.photo .ph{text-align:center;padding:26px 10px;color:var(--muted);font-size:13px}
+.photo input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.result{background:#0d1117;border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:10px;
+  font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word;min-height:44px;display:none}
+.result.show{display:block}
+.result .act{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.result .act .btn.small{flex:1}
+audio{width:100%;margin-top:10px}
+.row{display:flex;gap:8px}
+.row .btn{margin-top:0}
+#log{font-family:ui-monospace,monospace;font-size:12px;background:#0d1117;border:1px solid var(--border);
+  border-radius:10px;padding:10px;max-height:180px;overflow-y:auto;margin-top:10px;display:none;line-height:1.5}
+#log.show{display:block}
+#log .t{color:var(--accent2)}
+.progress{display:none;margin-top:10px;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.progress.show{display:block}
+.progress i{display:block;height:100%;width:40%;background:var(--accent);border-radius:2px;animation:slide 1s infinite}
+@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+footer{position:fixed;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--border);
+  padding:10px 16px;display:flex;gap:8px;z-index:10}
+footer .url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted);line-height:34px}
+footer .btn.server{width:auto;margin:0;padding:8px 16px;background:transparent;border:1px solid var(--accent);color:var(--accent)}
+.toast{position:fixed;top:14px;left:50%;transform:translateX(-50%) translateY(-20px);background:#30363d;
+  color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:50;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:88vw}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:#b62324}
+</style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<h1><span class="dot" id="dot"></span> ScreenOCR TTS <span style="color:var(--accent)">Pro</span></h1>
+<div class="sub" id="server-info">Подключение к серверу…</div>
+
+<div class="tabs">
+  <button class="active" data-panel="ocr">📷 OCR</button>
+  <button data-panel="tts">🗣 TTS</button>
+  <button data-panel="trans">🌍 Перевод</button>
+  <button data-panel="log2">📜 Лог</button>
+</div>
+
+<!-- OCR -->
+<div class="card panel active" id="panel-ocr">
+  <h2>Фото → текст</h2>
+  <div class="photo" id="photoBox">
+    <div class="ph" id="photoHint">👆 Нажми, чтобы сделать фото или выбрать изображение</div>
+    <img id="preview" alt="preview">
+    <input type="file" id="fileInput" accept="image/*" capture="environment">
+  </div>
+  <div class="row" style="gap:8px;margin-top:12px">
+    <button class="btn small" id="btnOcr">Распознать текст</button>
+    <button class="btn small ghost" id="btnAuto" title="OCR + чистка + перевод + озвучка">⚡ Всё сразу</button>
+  </div>
+  <div class="progress" id="ocrProg"><i></i></div>
+  <div class="result" id="ocrResult"></div>
+</div>
+
+<!-- TTS -->
+<div class="card panel" id="panel-tts">
+  <h2>Озвучка текста</h2>
+  <label>Текст</label>
+  <textarea id="ttsText" placeholder="Введи текст для озвучки…"></textarea>
+  <label>Голос (Edge)</label>
+  <select id="voiceSelect"><option value="ru-RU-SvetlanaNeural">Загрузка голосов…</option></select>
+  <label>Скорость</label>
+  <select id="rateSelect">
+    <option value="+0%">норм</option>
+    <option value="-25%">-25%</option>
+    <option value="+25%">+25%</option>
+    <option value="+50%">+50%</option>
+  </select>
+  <button class="btn" id="btnSpeak">🔊 Озвучить</button>
+  <div class="progress" id="spProg"><i></i></div>
+  <audio id="ttsAudio" controls></audio>
+</div>
+
+<!-- Перевод -->
+<div class="card panel" id="panel-trans">
+  <h2>Перевод (OrcaRouter → Google)</h2>
+  <label>Текст</label>
+  <textarea id="trText" placeholder="Введи текст…"></textarea>
+  <button class="btn" id="btnTrans">🌍 Перевести → RU</button>
+  <div class="progress" id="trProg"><i></i></div>
+  <div class="result" id="trResult"></div>
+</div>
+
+<!-- Лог -->
+<div class="card panel" id="panel-log2">
+  <h2>Живой лог <span class="tag">SSE</span></h2>
+  <pre id="log"></pre>
+</div>
+
+<footer>
+  <div class="url" id="footUrl">—</div>
+  <button class="btn server" id="btnServer">🔄 Сбросить</button>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const BASE = location.origin;
+let currentImg = null;
+
+function toast(msg, err=false){
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(()=> t.className = "toast", 2600);
+}
+
+function setDot(cls){ $("dot").className = "dot" + (cls ? " "+cls : ""); }
+
+async function api(path, opts={}){
+  const r = await fetch(BASE + path, opts);
+  const ct = r.headers.get("content-type")||"";
+  if(ct.includes("json")) return r.json();
+  if(ct.includes("audio") || ct.includes("image")) return r.blob();
+  return r.text();
+}
+
+// ---- Health / voices ----
+async function refreshHealth(){
+  try{
+    const h = await api("/health");
+    $("footUrl").textContent = BASE;
+    $("server-info").textContent =
+      `Сервер: ${h.app} · OCR ${h.ocr_ready ? "готов ✅" : "…"} · ${h.time} · LAN: ${h.ip}`;
+    setDot(h.ocr_ready ? "on" : "wait");
+  }catch(e){
+    setDot(""); $("server-info").textContent = "Сервер недоступен — проверь туннель/рабочий процесс";
+  }
+}
+
+async function loadVoices(){
+  try{
+    const d = await api("/voices");
+    const sel = $("voiceSelect");
+    sel.innerHTML = "";
+    const edges = d.edge || [];
+    const groups = {ru:[], en:[]};
+    for(const v of edges){
+      const lang = (v.locale||"").startsWith("ru") ? "ru" : "en";
+      groups[lang].push(v);
+    }
+    if(edges.length === 0){
+      const o = document.createElement("option");
+      o.value = "ru-RU-SvetlanaNeural"; o.textContent = "Голоса недоступны (по умолчанию)";
+      sel.appendChild(o);
+    }
+    for(const lang of ["ru","en"]){
+      if(!groups[lang].length) continue;
+      const g = document.createElement("optgroup");
+      g.label = lang.toUpperCase();
+      for(const v of groups[lang]){
+        const o = document.createElement("option");
+        o.value = v.name;
+        o.textContent = v.friendly_name || v.name;
+        g.appendChild(o);
+      }
+      sel.appendChild(g);
+    }
+  }catch(e){ console.error(e); }
+}
+
+// ---- OCR ----
+$("fileInput").addEventListener("change", (e)=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    currentImg = f;
+    $("preview").src = rd.result;
+    $("photoBox").classList.add("has");
+    $("photoHint").style.display = "none";
+  };
+  rd.readAsDataURL(f);
+});
+
+function showResult(el, content, actions=true){
+  el.innerHTML = "";
+  const div = document.createElement("div");
+  div.style.whiteSpace = "pre-wrap";
+  div.textContent = content || "(пусто)";
+  el.appendChild(div);
+  if(content && actions){
+    const row = document.createElement("div");
+    row.className = "act";
+    const speak = document.createElement("button");
+    speak.className = "btn small"; speak.textContent = "🔊 Озвучить";
+    speak.onclick = () => { $("ttsText").value = content; switchPanel("tts"); $("btnSpeak").click(); };
+    const trans = document.createElement("button");
+    trans.className = "btn small ghost"; trans.textContent = "🌍 Перевести";
+    trans.onclick = () => { $("trText").value = content; switchPanel("trans"); $("btnTrans").click(); };
+    row.appendChild(speak); row.appendChild(trans);
+    el.appendChild(row);
+  }
+  el.classList.add("show");
+}
+
+$("btnOcr").addEventListener("click", async ()=>{
+  if(!currentImg){ toast("Сначала выбери фото", true); return; }
+  $("ocrProg").classList.add("show");
+  try{
+    const body = new FormData();
+    body.append("image", currentImg);
+    const d = await fetch(BASE + "/ocr_image", {method:"POST", body});
+    const r = await d.json();
+    showResult($("ocrResult"), r.cleaned || r.text);
+    pushLog("OCR", (r.cleaned || r.text).slice(0,120));
+    if(r.text && !r.cleaned) toast("Текст распознан");
+    if(r.cleaned) toast("OCR + чистка готовы");
+  }catch(e){ toast("OCR ошибка: "+e.message, true); }
+  finally{ $("ocrProg").classList.remove("show"); }
+});
+
+$("btnAuto").addEventListener("click", async ()=>{
+  if(!currentImg){ toast("Сначала выбери фото", true); return; }
+  $("ocrProg").classList.add("show");
+  try{
+    const body = new FormData();
+    body.append("image", currentImg);
+    const d = await fetch(BASE + "/ocr_image", {method:"POST", body});
+    const r = await d.json();
+    const text = r.cleaned || r.text || "";
+    if(!text){ toast("Текст не найден"); return; }
+    pushLog("OCR", text.slice(0,120));
+    // перевод
+    let translated = "";
+    try{
+      const t = await api("/translate", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({text, dst:"ru"})});
+      translated = t.text || "";
+      pushLog("TRANS", translated.slice(0,120));
+    }catch(e){}
+    // озвучка
+    setTimeout(async ()=>{
+      try{
+        const s = await api("/speak", {method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({text, voice: $("voiceSelect").value, rate: $("rateSelect").value})});
+        if(s.ok && s.file){
+          const blob = await api("/audio/"+s.file);
+          $("ttsAudio").src = URL.createObjectURL(blob);
+          $("ttsAudio").play();
+        }
+      }catch(e){ toast("TTS ошибка: "+e.message, true); }
+    }, 100);
+    showResult($("ocrResult"), translated || text);
+    toast("Готово: OCR → перевод → озвучка");
+  }catch(e){ toast("Ошибка: "+e.message, true); }
+  finally{ $("ocrProg").classList.remove("show"); }
+});
+
+// ---- TTS ----
+$("btnSpeak").addEventListener("click", async ()=>{
+  const text = $("ttsText").value.trim();
+  if(!text){ toast("Введи текст", true); return; }
+  $("spProg").classList.add("show");
+  try{
+    const d = await api("/speak", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({text, voice: $("voiceSelect").value, rate: $("rateSelect").value})});
+    if(!d.ok){ toast("TTS: "+ (d.error||"fail"), true); return; }
+    const blob = await api("/audio/"+d.file);
+    $("ttsAudio").src = URL.createObjectURL(blob);
+    $("ttsAudio").play();
+    pushLog("TTS", text.slice(0,120));
+    toast("Озвучено");
+  }catch(e){ toast("TTS ошибка: "+e.message, true); }
+  finally{ $("spProg").classList.remove("show"); }
+});
+
+// ---- Перевод ----
+$("btnTrans").addEventListener("click", async ()=>{
+  const text = $("trText").value.trim();
+  if(!text){ toast("Введи текст", true); return; }
+  $("trProg").classList.add("show");
+  try{
+    const d = await api("/translate", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({text, dst:"ru"})});
+    showResult($("trResult"), d.text, false);
+    pushLog("TRANS", (d.text||"").slice(0,120));
+    toast("Переведено");
+  }catch(e){ toast("Ошибка: "+e.message, true); }
+  finally{ $("trProg").classList.remove("show"); }
+});
+
+// ---- Лог / SSE ----
+const logEl = $("log");
+function pushLog(tag, text){
+  logEl.style.display = "block";
+  const line = document.createElement("div");
+  line.innerHTML = `<span class="t">[${tag}]</span> ${escapeHtml(text)}`;
+  logEl.prepend(line);
+  while(logEl.children.length > 60) logEl.removeChild(logEl.lastChild);
+}
+function escapeHtml(s){ return (s||"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function connectSSE(){
+  const es = new EventSource(BASE + "/events");
+  es.addEventListener("subtitle", (e)=>{
+    try{ const d = JSON.parse(e.data); pushLog("SSE", d.text); }catch(_){}
+  });
+  es.onerror = ()=>{ setTimeout(connectSSE, 3000); };
+}
+
+// ---- Tabs ----
+function switchPanel(name){
+  document.querySelectorAll(".tabs button").forEach(b=> b.classList.toggle("active", b.dataset.panel===name));
+  document.querySelectorAll(".panel").forEach(p=> p.classList.toggle("active", p.id==="panel-"+name));
+}
+document.querySelectorAll(".tabs button").forEach(b=>{
+  b.addEventListener("click", ()=> switchPanel(b.dataset.panel));
+});
+
+$("btnServer").addEventListener("click", ()=>{
+  $("ocrResult").classList.remove("show");
+  $("photoBox").classList.remove("has");
+  $("photoHint").style.display = "";
+  refreshHealth(); loadVoices();
+  toast("Обновлено");
+});
+
+// ---- PWA ----
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("/sw.js").catch(()=>{});
+}
+
+// init
+refreshHealth();
+loadVoices();
+setInterval(refreshHealth, 5000);
+connectSSE();
+</script>
+</body>
+</html>
