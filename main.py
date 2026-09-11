@@ -20,9 +20,15 @@ LOCK_FILE = os.path.join(tempfile.gettempdir(), "screen_ocr_tts.lock")
 
 def check_already_running():
     try:
-        import msvcrt
+        if sys.platform == 'win32':
+            import msvcrt
+        else:
+            import fcntl
         lock_fd = open(LOCK_FILE, 'w')
-        msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        if sys.platform == 'win32':
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return lock_fd
     except (IOError, OSError):
         return None
