@@ -911,6 +911,39 @@ class OCRWrapper:
         logger.info(f"[OCR] Multi-pass best: '{best_preset}' ({len(text)} chars, {avg_conf:.0f}%): {text[:120]}")
         return text, avg_conf
 
+    def _frame_signature(self, img):
+        """Дешёвая подпись кадра: хеш уменьшенной копии.
+
+        Нужен, чтобы НЕ гонять тяжёлый OCR (4-8 c) на кадр, который не
+        изменился: при сканировании по кнопке или по таймеру экран часто
+        тот же, и повторный разбор — чистая потеря времени и CPU.
+        """
+        try:
+            small = img.convert("L").resize((160, 90))
+            return np.asarray(small, dtype=np.int8).tobytes()
+        except Exception:
+            return None
+
+    def _cached_result(self, img):
+        """(text, conf, hit) — hit=True, если кадр не менялся."""
+        if not self.settings.get("ocr.detect_changes", True):
+            return None, 0.0, False
+        sig = self._frame_signature(img)
+        if sig is None or sig != getattr(self, "_last_signature", None):
+            return None, 0.0, False
+        return (getattr(self, "_last_text", ""),
+                getattr(self, "_last_conf", 0.0), True)
+
+    def _store_result(self, img, text, conf):
+        try:
+            sig = self._frame_signature(img)
+            if sig is not None:
+                self._last_signature = sig
+                self._last_text = text
+                self._last_conf = conf
+        except Exception:
+            pass
+
     def recognize(self, img: Image.Image = None) -> tuple:
         """Распознавание текста через OCR. Возвращает (text, confidence).
 
@@ -924,9 +957,21 @@ class OCRWrapper:
                 if img is None:
                     return "", 0.0
 
+            # Кадр не менялся — возвращаем прошлый результат, не тратя
+            # 4-8 c CPU на тот же самый текст.
+            cached, cconf, hit = self._cached_result(img)
+            if hit:
+                logger.debug("[OCR] кадр не изменился — беру кэш")
+                return cached, cconf
+
             # Сохранение скриншота для анализа
             self._save_screenshot(img)
             self._last_screenshot = img
+
+            # Подпись считаем по ИСХОДНОМУ кадру: после препроцессинга
+            # картинка меняется, и сравнение с сохранённой подписью
+            # никогда не совпало бы (кэш молча не работал).
+            orig_img = img
 
             # Применяем пресет контента к изображению
             img = self._apply_content_preset(img)
@@ -947,6 +992,7 @@ class OCRWrapper:
                     if text and len(text.strip()) >= 2:
                         break
 
+            self._store_result(orig_img, text, conf)
             return text, conf
 
         except Exception as e:

@@ -14,20 +14,46 @@ logger = logging.getLogger(__name__)
 class RapidOCREngine:
     """RapidOCR engine using PaddleOCR models via ONNX Runtime."""
 
-    def __init__(self, lang: str = "en"):
+    def __init__(self, lang: str = "en", threads: int = 2,
+                 limit_side_len: int = 480, use_cls: bool = False):
         self.lang = lang
         self._engine = None
         self._initialized = False
+        # Ограничения по CPU. По умолчанию ONNX Runtime берёт ВСЕ ядра
+        # (intra_op_num_threads=-1) — из-за этого распознавание съедало
+        # процессор и игра проседала по FPS. Держим 2 потока.
+        self.threads = max(1, int(threads))
+        self.limit_side_len = int(limit_side_len)
+        self.use_cls = bool(use_cls)
 
     def initialize(self) -> bool:
         """Initialize RapidOCR engine."""
         try:
             from rapidocr_onnxruntime import RapidOCR
 
-            self._engine = RapidOCR()
+            self._engine = RapidOCR(
+                use_cls=self.use_cls,
+                intra_op_num_threads=self.threads,
+                inter_op_num_threads=1,
+                limit_side_len=self.limit_side_len,
+            )
             self._initialized = True
-            logger.info("[RapidOCR] Engine initialized successfully")
+            logger.info(f"[RapidOCR] Engine ready (threads={self.threads}, "
+                        f"limit_side_len={self.limit_side_len}, "
+                        f"cls={self.use_cls})")
             return True
+        except TypeError:
+            # старая версия не знает часть параметров — откатываемся
+            try:
+                from rapidocr_onnxruntime import RapidOCR
+                self._engine = RapidOCR()
+                self._initialized = True
+                logger.info("[RapidOCR] Engine ready (параметры потоков "
+                            "не поддерживаются этой версией)")
+                return True
+            except Exception as e:
+                logger.error(f"[RapidOCR] Init failed: {e}")
+                return False
         except ImportError:
             logger.error("[RapidOCR] rapidocr-onnxruntime not installed")
             return False
@@ -71,6 +97,35 @@ class RapidOCREngine:
         except Exception as e:
             logger.debug(f"[RapidOCR] recognize_fast failed: {e}")
             return "", 0.0
+
+    def recognize_auto(self, img: Image.Image) -> Tuple[str, float]:
+        """Умный режим: сначала быстрый проход, детектор — только если нужно.
+
+        Детектор (PP-OCR DB) — самая тяжёлая часть: 6.9 c против 0.3 c
+        без него. Но для крупного кадра без детектора выходит мусор.
+
+        Поэтому: на узкой полосе (типичный кадр после авто-поиска строки
+        субтитров) идём быстрым путём, а если текста мало или уверенность
+        низкая — добиваем детектором.
+        """
+        w, h = img.size
+        if w * h <= 640 * 180:
+            try:
+                text, conf = self.recognize_fast(img)
+                t = (text or "").strip()
+                # Строгие критерии: быстрый проход без детектора иногда
+                # теряет пробелы («Wemustleavethecamp») или путает буквы
+                # («Level 89» -> «Levelas»). Такое лучше переделать
+                # детектором, чем озвучить мусор.
+                has_spaces = " " in t
+                if conf >= 0.9 and len(t) >= 3 and (has_spaces or len(t) <= 8):
+                    return text, conf
+                logger.debug(f"[RapidOCR] быстрый проход неубедителен "
+                             f"(conf={conf:.2f}, {len(t)} симв.) — "
+                             f"переделываю детектором")
+            except Exception:
+                pass
+        return self.recognize(img)
 
     def recognize(self, img: Image.Image) -> Tuple[str, float]:
         """Recognize text from PIL Image. Returns (text, confidence)."""

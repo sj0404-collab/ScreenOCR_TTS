@@ -299,13 +299,24 @@ class CompactWindow(QMainWindow):
 
         ocr_layout.addWidget(QLabel("Engine:"), 1, 0)
         self.engine_combo = QComboBox()
-        self._engine_id_map = {
-            "Google Lens": "google_lens",
-            "TFLite Cyrillic": "tflite_cyrillic",
-            "RapidOCR": "rapidocr",
-            "EasyOCR": "easyocr",
-            "Tesseract": "tesseract",
-        }
+        # Только реально установленные движки: раньше в списке были
+        # Tesseract (нет в движках) и EasyOCR (пакет не установлен) —
+        # выбор заведомо нерабочих вариантов.
+        from ocr_engines import list_available_engines
+        self._engine_id_map = {}
+        for _d in list_available_engines():
+            if _d.engine_type.value == "google_lens":
+                self._engine_id_map["Google Lens"] = "google_lens"
+            elif _d.engine_type.value == "zen":
+                self._engine_id_map["Zen (space-bunny-free)"] = "zen"
+            elif _d.engine_type.value == "rapidocr":
+                self._engine_id_map["RapidOCR (быстрый)"] = "rapidocr"
+            elif _d.engine_type.value == "tflite_cyrillic":
+                self._engine_id_map["TFLite Cyrillic"] = "tflite_cyrillic"
+            elif _d.engine_type.value == "easyocr":
+                self._engine_id_map["EasyOCR"] = "easyocr"
+        if not self._engine_id_map:
+            self._engine_id_map = {"Google Lens": "google_lens"}
         self._engine_name_map = {v: k for k, v in self._engine_id_map.items()}
         self.engine_combo.addItems(list(self._engine_id_map.keys()))
         ocr_layout.addWidget(self.engine_combo, 1, 1)
