@@ -338,21 +338,23 @@ class MainWindow(QMainWindow):
         """
         gui = self
 
-        def on_heard(heard, lang_tag=""):
+        def on_heard(heard, lang_tag="", speaker=""):
             def _upd():
+                sp = f" [{speaker}]" if speaker else ""
                 if gui.stt_heard_overlay:
-                    gui.stt_heard_overlay.replace_last_line(f"[{lang_tag}] {heard}")
+                    gui.stt_heard_overlay.replace_last_line(f"[{lang_tag}]{sp} {heard}")
                 # Show pending translation immediately so the overlay
                 # never looks dead while we wait for the network call.
                 if gui.stt_translate_overlay:
                     gui.stt_translate_overlay.replace_last_line(
-                        f"[{lang_tag}] {heard} ...")
+                        f"[{lang_tag}]{sp} {heard} ...")
             gui._gui(_upd)
 
-        def on_text(en, ru, lang_tag=""):
+        def on_text(en, ru, lang_tag="", speaker=""):
             def _upd():
-                gui.status_label.setText(f"Voice [{lang_tag}]: {en[:50]}")
-                gui.result_text.setPlainText(f"[{lang_tag}]\nEN: {en}\n\nRU: {ru}")
+                sp = f" [{speaker}]" if speaker else ""
+                gui.status_label.setText(f"Voice [{lang_tag}]{sp}: {en[:50]}")
+                gui.result_text.setPlainText(f"[{lang_tag}]{sp}\nEN: {en}\n\nRU: {ru}")
                 # VTuber: auto-emotion by translated text
                 gui._set_avatar_emotion(ru)
                 # Mirror into the main-window STT box too (debugging)
@@ -787,23 +789,16 @@ class MainWindow(QMainWindow):
 
     def _do_translate_new(self, text, engine):
         try:
-            if "OrcaRouter" in engine:
+            if "Zen" in engine:
                 from translator import Translator
                 tr = Translator()
-                api_key = self.settings.get("translation.orcarouter_key", "sk-orca-T4iffQ94PFFSalDxhedoAntItEZLT4KRmEBTntD2eSo")
-                model = self.settings.get("translation.orcarouter_model", "qwen/qwen3.8-27b-free")
-                tr.configure(orcarouter_key=api_key, orcarouter_model=model)
-                result = tr.translate(text, src="en", dst="ru", engine="orcarouter")
-            elif "Zen" in engine:
-                from translator import Translator
-                tr = Translator()
-                model = self.settings.get("translation.zen_model", "mimo-v2.5-free")
-                tr.configure(model=model)
+                model = (self.settings.get("translation.zen_model", "") or "").strip()
+                tr.configure(zen_model=model)
                 result = tr.translate(text, src="en", dst="ru", engine="zen")
             elif "Google" in engine:
                 from translator import Translator
                 tr = Translator()
-                result = tr.translate(text, src="en", dst="ru")
+                result = tr.translate(text, src="en", dst="ru", engine="google")
             elif "DeepL" in engine:
                 from translator import Translator
                 tr = Translator()
@@ -811,14 +806,6 @@ class MainWindow(QMainWindow):
             elif "Offline" in engine:
                 from en_ru_dict import translate_text
                 result = translate_text(text)
-            elif "OpenRouter" in engine:
-                from translator import Translator
-                tr = Translator()
-                api_key = self.settings.get("translation.openrouter_key", "")
-                model = self.settings.get("translation.openrouter_model", "")
-                if api_key:
-                    tr.configure(openrouter_key=api_key, openrouter_model=model)
-                result = tr.translate(text, src="en", dst="ru", engine="openrouter")
             else:
                 result = "[Unknown engine]"
 
@@ -1075,9 +1062,10 @@ class MainWindow(QMainWindow):
         ocr_layout.addWidget(self.lang_combo, 0, 1)
         ocr_layout.addWidget(QLabel("Engine:"), 0, 2)
         self.engine_combo = QComboBox()
+        # OrcaRouter/OpenRouter удалены: переводить ими больше нечем.
         self.engine_combo.addItems([
             "EasyOCR", "RapidOCR (PaddleOCR)",
-            "OrcaRouter (free LLM)", "Zen (free, no key)", "OpenRouter (API)", "Google Lens",
+            "Zen (free, no key)", "Google Lens",
             "Tesseract", "Windows OCR"
         ])
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
@@ -1228,9 +1216,11 @@ class MainWindow(QMainWindow):
         eng_row = QHBoxLayout()
         eng_row.addWidget(QLabel("Engine:"))
         self.translate_engine_combo = QComboBox()
+        # OrcaRouter (404) и OpenRouter (403) удалены 26.09.2026 —
+        # их endpoints не отвечают, вариантов в списке больше нет.
         self.translate_engine_combo.addItems([
-            "OrcaRouter (free LLM)", "Zen (free, no key)", "OpenRouter (API)",
-            "Google (free)", "DeepL (free)", "Offline dict"
+            "Zen (free, no key)", "Google (free)", "DeepL (free)",
+            "Offline dict"
         ])
         self.translate_engine_combo.setFixedWidth(180)
         eng_row.addWidget(self.translate_engine_combo)
@@ -3022,7 +3012,7 @@ class MainWindow(QMainWindow):
         """Handle OCR engine change."""
         engine_names = [
             "easyocr", "rapidocr",
-            "orcarouter", "zen", "openrouter", "google_lens",
+            "zen", "google_lens",
             "tesseract", "windows_ocr"
         ]
         engine = engine_names[idx] if idx < len(engine_names) else "easyocr"
@@ -3476,13 +3466,13 @@ class MainWindow(QMainWindow):
                     self.settings.get("ocr.multi_pass", False))
             # OCR engine
             if hasattr(self, 'engine_combo'):
-                engine = self.settings.get("ocr.engine", "easyocr")
+                engine = self.settings.get("ocr.engine", "google_lens")
                 engine_map = {
                     "easyocr": 0, "rapidocr": 1,
-                    "orcarouter": 2, "zen": 3, "openrouter": 4, "google_lens": 5,
-                    "tesseract": 6, "windows_ocr": 7
+                    "zen": 2, "google_lens": 3,
+                    "tesseract": 4, "windows_ocr": 5
                 }
-                idx = engine_map.get(engine, 0)
+                idx = engine_map.get(engine, 3)  # google_lens index
                 self.engine_combo.setCurrentIndex(idx)
         except Exception as e:
             logger.warning(f"Load settings error: {e}")
@@ -3501,7 +3491,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'engine_combo'):
             engine_names = [
                 "easyocr", "rapidocr",
-                "orcarouter", "zen", "openrouter", "google_lens",
+                "zen", "google_lens",
                 "tesseract", "windows_ocr"
             ]
             idx = self.engine_combo.currentIndex()

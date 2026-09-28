@@ -520,7 +520,7 @@ def _add_punctuation_to_long_words(text: str) -> str:
 
 class OCRWrapper:
     """Минимальная обёртка над OCR для распознавания текста с экрана.
-    Поддерживает EasyOCR, RapidOCR и онлайн движки (OrcaRouter, Zen, OpenRouter)."""
+    Поддерживает EasyOCR, RapidOCR и онлайн-движок Zen (free, без ключа)."""
 
     def __init__(self, settings):
         self.settings = settings
@@ -532,7 +532,7 @@ class OCRWrapper:
         self.easyocr_reader = None
         self.rapidocr_engine = None
         self.online_ocr_engine = None
-        self.engine_type = settings.get("ocr.engine", "tflite_cyrillic")
+        self.engine_type = settings.get("ocr.engine", "google_lens")
         # Backward compat: old id renamed to tflite_cyrillic
         if self.engine_type == "cyrillic_onnx":
             self.engine_type = "tflite_cyrillic"
@@ -552,8 +552,10 @@ class OCRWrapper:
         self._tflite_engine = None
         self._tflite_lock = threading.Lock()
 
-        # Онлайн OCR настройки
-        self._online_engine_name = settings.get("ocr.online_engine", "orcarouter")
+        # Онлайн OCR настройки.
+        # OrcaRouter удалён (endpoint 404), OpenRouter отклоняет ключ (403).
+        # Из бесплатных без ключа остаётся Zen (opencode.ai).
+        self._online_engine_name = settings.get("ocr.online_engine", "zen")
         self._online_api_key = settings.get("ocr.online_api_key", "")
         self._online_model = settings.get("ocr.online_model", "")
 

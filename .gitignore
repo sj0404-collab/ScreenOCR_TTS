@@ -6,6 +6,8 @@ __pycache__/
 
 # Logs & traces
 *.log
+*.err
+*.out
 hang_trace.txt
 
 # Local user state (config.json contains PERSONAL API KEYS - never commit!)

@@ -102,13 +102,16 @@ class OfflineTranslator:
         return False
 
     def translate_with_fallback(self, text, src="en", dst="ru",
-                                openrouter_key=None, openrouter_model=None,
                                 zen_key=None):
+        """Перевод: сначала словарь, при неполном покрытии — сеть.
+
+        Параметр openrouter_key/openrouter_model удалён 26.09.2026 вместе с
+        провайдером (ключ отклонялся с 403).
+        """
         offline = self.translate(text)
         if not self.has_untranslated(text):
             return offline
-        online = self._try_online(text, src, dst,
-                                  openrouter_key, openrouter_model, zen_key)
+        online = self._try_online(text, src, dst, zen_key)
         if online:
             key = text.lower().strip()
             self._learned[key] = online
@@ -116,12 +119,9 @@ class OfflineTranslator:
             return online
         return offline
 
-    def _try_online(self, text, src, dst, or_key, or_model, zen_key):
+    def _try_online(self, text, src, dst, zen_key):
         if zen_key:
             r = self._zen(text, dst, zen_key)
-            if r: return r
-        if or_key:
-            r = self._openrouter(text, src, dst, or_key, or_model)
             if r: return r
         r = self._google(text, src, dst)
         if r: return r
@@ -133,7 +133,7 @@ class OfflineTranslator:
                 "https://opencode.ai/zen/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
-                json={"model": "mimo-v2.5-free",
+                json={"model": "space-bunny-free",
                       "messages": [{"role": "user", "content":
                         f"Translate to Russian. ONLY the translation.\n\n{text}"}],
                       "temperature": 0.1, "max_tokens": 1024},
@@ -143,24 +143,6 @@ class OfflineTranslator:
                 if c and c.strip(): return c.strip()
         except Exception as e:
             logger.debug(f"Zen: {e}")
-        return ""
-
-    def _openrouter(self, text, src, dst, api_key, model):
-        try:
-            resp = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}",
-                         "Content-Type": "application/json"},
-                json={"model": model or "google/gemini-2.0-flash-001",
-                      "messages": [{"role": "user", "content":
-                        f"Translate to Russian. ONLY the translation.\n\n{text}"}],
-                      "temperature": 0.1, "max_tokens": 1024},
-                timeout=30)
-            if resp.status_code == 200:
-                c = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-                if c and c.strip(): return c.strip()
-        except Exception as e:
-            logger.debug(f"OpenRouter: {e}")
         return ""
 
     def _google(self, text, src, dst):

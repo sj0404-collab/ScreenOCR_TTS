@@ -37,7 +37,7 @@ class Settings:
         return {
             "ocr": {
                 "language": "rus+eng",
-                "engine": "tflite_cyrillic",
+                "engine": "google_lens",
                 "confidence_threshold": 60,
                 "scan_interval_ms": 2000,
                 "contrast": 1.5,
@@ -104,6 +104,15 @@ class Settings:
                 "dst_lang": "ru",
                 "api_key": "",
                 "model": "google/gemini-2.0-flash-001"
+            },
+            "game": {
+                "text_language": "ru",
+                "audio_language": "auto",
+                "auto_read_mode": "full",
+                "voice_activity_detection": True,
+                "auto_repeat_en": True,
+                "auto_translate_ru": True,
+                "tts_rate_auto_read": -30
             }
         }
     

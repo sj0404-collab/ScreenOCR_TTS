@@ -5,6 +5,7 @@ Captures audio from the game window specifically, without headphones/mic noise.
 """
 import ctypes
 import logging
+import re
 import struct
 import threading
 import time
@@ -47,15 +48,55 @@ class GameAudioCapture:
         self._game_name = None
         self._sample_rate = 48000
         self._channels = 2
-        self._chunk_sec = 1.0  # faster audio delivery -> lower STT latency
+        # Блок чтения 0.25 c, а не 1 c: поток захвата замечает _running=False
+        # и завершается за четверть секунды (иначе он переживал stop() и
+        # копился при каждом старте), плюс аудио попадает в STT быстрее.
+        self._chunk_sec = 0.25
         self._audio_callbacks = []  # list of callables(audio, sample_rate)
         self._proc_capture = None
         self._capture_thread = None
-        self.per_process_enabled = False  # opt-in: per-process COM code is fragile
+        self._capture_threads = []
+        # «Поколение» захвата. Потоки петли застревают внутри
+        # stream.read() (C-уровень, извне их не прервать) и переживают
+        # stop(). Если они продолжают звать колбэки, то после N
+        # перезапусков одна реплика попадает в STT N раз. Поэтому поток
+        # знает своё поколение и молчит, если поколение устарело.
+        self._gen = 0
+        # Per-process capture: захват ТОЛЬКО игры (наш TTS сразу исключён).
+        # Включаем автоматически, но с проверкой «пошёл ли звук» и откатом.
+        self.per_process_enabled = True
+        self._proc_audio_seen = False
+        self._proc_check_sec = 5.0   # пауза перед health-check
+        self._proc_retry_sec = 300.0  # не повторять process-capture чаще
+        self._proc_failed = {}       # pid -> (время, ошибка) — чтобы не долбить
+        self._target_logged_pid = None  # для лога «цель изменилась»
+        self._active_streams = 0     # реально открытых loopback-потоков
+        self._auto_target = True     # цель определяется автоматически
+        self._auto_monitor = None
         self._silence_threshold = 0.005
         self._voice_threshold = 0.01  # min peak to count as "voice/audio activity"
         self._saved_default_output = None  # saved before VB-Cable switch
-        self._vbcable_enabled = True  # auto-switch to VB-Cable if available
+        # VB-Cable переключает системный вывод устройства — опасно.
+        # Включается только явно (set_vbcable(True)).
+        self._vbcable_enabled = False
+
+    # Процессы, которые почти наверняка НЕ являются источником игровых реплик
+    _AUDIO_DENYLIST = (
+        "python", "pythonw", "explorer", "system", "audiodg", "svchost",
+        "chrome", "msedge", "firefox", "opera", "brave", "vivaldi",
+        "vlc", "mpv", "potplay", "aimp", "foobar", "spotify", "itunes",
+        "discord", "telegram", "skype", "steam", "epicgameslauncher",
+        "battle.net", "bnet", "origin", "launcher", "crashreporter",
+        "obs64", "obs32", "audacity", "ardour", "dxtory", "rtap",
+    )
+
+    # Ключевые слова, типичные для игровых процессов
+    _GAME_HINTS = (
+        "game", "genshin", "honkai", "wuthering", "eldenring", "cyberpunk",
+        "unity", "unreal", "godot", "shipping", "win64", "client", "launcher_",
+        "starrail", "zzz", "pgr", "arknights", "cod", "warframe", "destiny",
+        "overwatch", "apex", "pubg", "tarkov", "stalker", "cyber", "fnaf",
+    )
 
     def _find_vbcable_output_device(self):
         """Find CABLE Input device ID (output device where game audio goes)."""
@@ -129,9 +170,6 @@ class GameAudioCapture:
 
             enumerator = comtypes.CoCreateInstance(
                 CLSID_MMDeviceEnumerator, IMMDeviceEnumerator, CLSCTX_ALL)
-            p_dev = c_void_p()
-            enumerator.GetDevice(device_id, c_void_p.__compat_type__())
-            # Get the device
             dev_pp = POINTER(IMMDevice)()
             enumerator.GetDevice(device_id, dev_pp)
             dev = dev_pp.contents
@@ -145,12 +183,22 @@ class GameAudioCapture:
             logger.debug(f"[GameAudio] IPolicyConfig failed: {e}")
             return False
 
+    def set_vbcable(self, enabled: bool):
+        """Ручное включение переключения вывода на VB-Cable (по умолчанию выкл.)."""
+        self._vbcable_enabled = bool(enabled)
+
     def _switch_to_vbcable(self):
         """Switch default output to CABLE Input, save original for restore."""
         try:
             from pycaw.pycaw import AudioUtilities
             speakers = AudioUtilities.GetSpeakers()
-            self._saved_default_output = speakers
+            if speakers is None:
+                logger.info("[GameAudio] No default output device")
+                return False
+            try:
+                self._saved_default_output = speakers._dev  # restore by id later
+            except Exception:
+                self._saved_default_output = speakers
 
             cable_id = self._find_vbcable_render_id()
             if not cable_id:
@@ -168,20 +216,17 @@ class GameAudioCapture:
             return False
 
     def _restore_default_output(self):
-        """Restore original default output device."""
-        if self._saved_default_output is None:
+        """Restore the ORIGINAL default output device (by saved id)."""
+        saved = self._saved_default_output
+        self._saved_default_output = None
+        if saved is None:
             return
+        device_id = getattr(saved, "id", saved)
         try:
-            if PYCAW_AVAILABLE:
-                devices = AudioUtilities.GetAllDevices()
-                for d in devices:
-                    name = d.FriendlyName or ""
-                    if "AMD" in name and "Loopback" not in name and d.state == 1:
-                        ok = self._set_default_render(d.id)
-                        if ok:
-                            logger.info(f"[GameAudio] Default output restored: {name}")
-                        break
-            self._saved_default_output = None
+            if self._set_default_render(device_id):
+                logger.info("[GameAudio] Default output restored")
+            else:
+                logger.warning("[GameAudio] Failed to restore default output")
         except Exception as e:
             logger.warning(f"[GameAudio] Restore failed: {e}")
 
@@ -200,60 +245,141 @@ class GameAudioCapture:
             return None
 
     def find_game_process(self, hwnd=None) -> dict:
-        """Find the target process.
+        """Авто-определение источника речи по АКТИВНЫМ аудиосессиям Windows.
 
-        Priority: the currently FOCUSED window's PID (the app the user is
-        actually looking at), then fall back to a name-pattern search.
-        We no longer grab unrelated processes (e.g. a game running on
-        another virtual desktop) just because their name matches.
+        Порядок:
+        1) активная сессия того окна, на котором сейчас фокус (это и есть игра);
+        2) активная сессия с «игровыми» признаками в имени;
+        3) любая активная сессия, кроме себя/браузеров/плееров/лаунчеров.
+
+        Требование «State == Active» отсекает молчащие приложения, у которых
+        просто есть звуковая сессия. Возвращает None, если активных сессий нет.
         """
         if not PYCAW_AVAILABLE:
             return None
 
-        sessions = AudioUtilities.GetAllSessions()
+        import os
+        my_pid = os.getpid()
 
-        # 1) Focused window first — this is the "current PID" the user wants.
-        fg_pid = self._get_foreground_pid()
-        if fg_pid:
-            for s in sessions:
-                if s.Process and s.Process.pid == fg_pid:
-                    name = s.Process.name()
-                    vol = s.SimpleAudioVolume.GetMasterVolume()
-                    self._game_pid = fg_pid
-                    self._game_name = name
-                    logger.info(f"[GameAudio] Focused window: {name} (PID={fg_pid}, vol={vol:.2f})")
-                    return {"pid": fg_pid, "name": name, "volume": vol}
+        try:
+            sessions = AudioUtilities.GetAllSessions()
+        except Exception as e:
+            logger.warning(f"[GameAudio] session enumeration failed: {e}")
+            return None
 
-        # 2) Fallback: keyword match (game launchers / engines)
-        game_keywords = [
-            'fnaf', 'nte', 'game', 'unreal', 'unity', 'godot',
-            'epic', 'origin', 'battle', 'blizzard', 'segaa', 'kono',
-            'shipping', 'win64',
-        ]
-        launcher_keywords = ['steam', 'epicgames', 'origin', 'battle.net']
-
-        best = None
+        active = []
         for s in sessions:
-            if s.Process:
-                name = s.Process.name().lower()
-                pid = s.Process.pid
-                vol = s.SimpleAudioVolume.GetMasterVolume()
+            try:
+                if int(s.State) != 1:      # 1 = AudioSessionStateActive
+                    continue
+                pid = int(s.ProcessId)
+                if pid == 0 or pid == my_pid:
+                    continue
+                proc = s.Process
+                if proc is None:
+                    continue
+                name = proc.name()
+                low = name.lower()
+                if any(d in low for d in self._AUDIO_DENYLIST):
+                    continue
+                try:
+                    vol = float(s.SimpleAudioVolume.GetMasterVolume())
+                    if vol <= 0.001:
+                        continue
+                except Exception:
+                    vol = 1.0
+                active.append({"pid": pid, "name": name, "volume": vol,
+                               "_low": low})
+            except Exception:
+                continue
 
-                is_launcher = any(kw in name for kw in launcher_keywords)
-                is_game = any(kw in name for kw in game_keywords) and not is_launcher
+        if not active:
+            return None
 
-                if is_game and (best is None or not best.get("_is_game")):
-                    best = {"pid": pid, "name": s.Process.name(), "volume": vol, "_is_game": True}
-                elif not is_launcher and best is None:
-                    best = {"pid": pid, "name": s.Process.name(), "volume": vol, "_is_game": False}
+        # Метка выбора: info только когда цель СМЕНИЛАСЬ, иначе авто-монитор
+        # заливал лог одинаковыми строками каждые 3 секунды.
+        def _mark(item, why):
+            changed = item["pid"] != getattr(self, "_target_logged_pid", None)
+            self._game_pid = item["pid"]
+            self._game_name = item["name"]
+            self._target_logged_pid = item["pid"]
+            log = logger.info if changed else logger.debug
+            log(f"[GameAudio] Target ({why}): {item['name']} "
+                f"(PID={item['pid']}, vol={item['volume']:.2f})")
+            return item
 
-        if best:
-            best.pop("_is_game", None)
-            self._game_pid = best["pid"]
-            self._game_name = best["name"]
-            logger.info(f"[GameAudio] Found (keyword): {self._game_name} (PID={self._game_pid}, vol={best['volume']:.2f})")
+        # 1) Окно в фокусе
+        fg_pid = self._get_foreground_pid()
+        for item in active:
+            if fg_pid and item["pid"] == fg_pid:
+                return _mark(item, "focused")
 
-        return best
+        # 2) Похоже на игру
+        for item in active:
+            if any(h in item["_low"] for h in self._GAME_HINTS):
+                return _mark(item, "game-like")
+
+        # 3) Любая оставшаяся активная сессия
+        return _mark(active[0], "active audio")
+
+    def refresh_target(self) -> dict:
+        """Переопределить цель (используется авто-монитором)."""
+        return self.find_game_process()
+
+    def _start_auto_monitor(self, interval=3.0):
+        """Следить за активной аудиосессией и подхватывать смену процесса."""
+        if self._auto_monitor and self._auto_monitor.is_alive():
+            return
+
+        def _loop():
+            while self._running and self._auto_target:
+                time.sleep(interval)
+                try:
+                    found = self.refresh_target()
+                except Exception as e:
+                    logger.debug(f"[GameAudio] auto monitor error: {e}")
+                    continue
+                if not found:
+                    continue
+                # Сравниваем с ЦЕЛЬЮ, а не с тем, открыт ли process-capture:
+                # при работе через loopback _proc_capture_pid() == None, и
+                # старое сравнение пересоздавало захват каждые 3 секунды.
+                if found["pid"] != self._game_pid:
+                    logger.info(f"[GameAudio] Active source changed -> "
+                                f"{found['name']} (PID={found['pid']})")
+                    self._switch_capture_to(found["pid"])
+
+            logger.info("[GameAudio] Auto monitor stopped")
+
+        self._auto_monitor = threading.Thread(target=_loop, daemon=True)
+        self._auto_monitor.start()
+
+    def is_isolated(self) -> bool:
+        """True только если звук реально приходит ИЗ ОДНОГО ПРОЦЕССА.
+
+        Проверяем не «объект создан», а «пакеты идут»: иначе анти-петля в
+        STT отключилась бы, а мы бы писали в текст всё подряд.
+        """
+        cap = getattr(self, "_proc_capture", None)
+        if not cap:
+            return False
+        try:
+            return bool(cap.is_active() and cap.packets_received > 0)
+        except Exception:
+            return False
+
+    def _proc_capture_pid(self):
+        if getattr(self, "_proc_capture", None):
+            return getattr(self._proc_capture, "pid", None)
+        return None
+
+    @staticmethod
+    def _name_of_pid(pid):
+        try:
+            import psutil
+            return psutil.Process(int(pid)).name()
+        except Exception:
+            return None
 
     def get_loopback_devices(self):
         """Get ALL WASAPI loopback devices (capture from all outputs)."""
@@ -266,6 +392,35 @@ class GameAudioCapture:
             info = self._pa.get_device_info_by_index(i)
             if info.get('isLoopbackDevice', False):
                 loopbacks.append(info)
+
+        # Приоритет: устройство, соответствующее текущему выводу по умолчанию.
+        # Мёртвые CABLE-устройства (отключённый VB-Cable) иначе открываются
+        # первыми и тратят время на бесполезные попытки.
+        #
+        # ВАЖНО: имя loopback-устройства у pyaudiowpatch отличается от имени
+        # обычного вывода суффиксом " [Loopback]", поэтому сравнение строк
+        # без нормализации НИКОГДА не срабатывало: приоритет не применялся,
+        # и первым открывался мёртвый CABLE (RMS ~0.00001), где тишина.
+        # Реальный звук игры был на AMD (RMS ~0.003).
+        try:
+            default_out = self._pa.get_default_output_device_info().get('name')
+        except Exception:
+            default_out = None
+
+        def _norm(nm):
+            return (nm or "").replace("[Loopback]", "").replace("Loopback", "").strip().lower()
+
+        def _rank(d):
+            name = d['name']
+            if default_out and _norm(name) == _norm(default_out):
+                return 0
+            # Виртуальные CABLE без совпадения с выводом по умолчанию —
+            # почти всегда остатки отключённого VB-Cable.
+            if re.search(r'cable|vb-?audio', name, re.I):
+                return 2
+            return 1
+
+        loopbacks.sort(key=_rank)
 
         for lb in loopbacks:
             logger.info(f"[GameAudio] Loopback device found: {lb['name']}")
@@ -291,70 +446,179 @@ class GameAudioCapture:
             self.stop()
 
     def start(self, game_pid=None, force_loopback=False):
-        """Start capturing audio.
+        """Начать захват аудио.
 
-        Auto-switches default output to VB-Cable (CABLE Input) so game audio
-        is routed through the virtual cable. Restores on stop().
+        1) Пытаемся захватить ТОЛЬКО выбранный/авто-определённый процесс
+           (наш собственный TTS тогда физически не попадает в запись).
+        2) Если не вышло — системный WASAPI loopback.
         """
         if self._running:
+            # Явный выбор exe важнее текущего авто-захвата: переключаемся
+            if game_pid is not None and self._auto_target \
+                    and self._proc_capture_pid() != game_pid:
+                self._game_name = self._name_of_pid(game_pid) or self._game_name
+                self._switch_capture_to(game_pid)
             return
 
+        self._auto_target = game_pid is None
         if game_pid is not None:
             self._game_pid = game_pid
-        elif not self._game_pid:
+        else:
             game = self.find_game_process()
             if game:
                 self._game_pid = game["pid"]
                 self._game_name = game["name"]
             else:
-                logger.warning("[GameAudio] No target process found, capturing all system audio")
+                logger.warning("[GameAudio] No active audio source found, "
+                               "capturing all system audio")
 
-        # Auto-switch default output to VB-Cable
         if self._vbcable_enabled:
             self._switch_to_vbcable()
 
-        # Per-process capture only for an EXPLICITLY selected exe AND when
-        # enabled (opt-in — the COM code is fragile and can hard-crash).
-        explicit = game_pid is not None
-        if (explicit and self.per_process_enabled and not force_loopback
+        if (self.per_process_enabled and not force_loopback and self._game_pid
                 and PROC_CAP_AVAILABLE and proc_cap_mod.is_supported()):
-            try:
-                self._proc_capture = proc_cap_mod.ProcessLoopbackCapture(
-                    self._game_pid, self._on_proc_audio,
-                    silence_threshold=self._silence_threshold,
-                    on_error=self._on_proc_error)
+            if self._start_process_capture(self._game_pid):
                 self._running = True
-                self._proc_capture.start()
-                logger.info(f"[GameAudio] Per-process capture started "
-                            f"(PID={self._game_pid}, app={self._game_name})")
+                self._start_auto_monitor()
                 return
-            except Exception as e:
-                logger.warning(f"[GameAudio] Per-process init failed, "
-                               f"falling back to system loopback: {e}")
 
-        # Fallback: system-wide WASAPI loopback — capture from ALL loopback devices
+        if not self._start_loopback_capture():
+            self._stop_streams()
+            if self._vbcable_enabled:
+                self._restore_default_output()
+            return
+
+        self._running = True
+        self._start_auto_monitor()
+
+    def _start_process_capture(self, pid) -> bool:
+        """Захват одного процесса + проверка, что звук реально пошёл."""
+        pid = int(pid)
+        # Этот API (AUDIOCLIENT_PROCESS_LOOPBACK) есть не на всех системах:
+        # при отказе не пытаемся снова 5 минут, сразу работаем через loopback.
+        bad = self._proc_failed.get(pid)
+        if bad and (time.time() - bad[0]) < self._proc_retry_sec:
+            return False
+
+        self._proc_audio_seen = False
+        try:
+            capture = proc_cap_mod.ProcessLoopbackCapture(
+                pid, self._on_proc_audio,
+                silence_threshold=self._silence_threshold,
+                on_error=self._on_proc_error)
+            capture.start()
+        except Exception as e:
+            self._proc_failed[pid] = (time.time(), e)
+            logger.warning(f"[GameAudio] Per-process init failed "
+                           f"(fallback to loopback): {e}")
+            return False
+
+        self._proc_capture = capture
+        # Health-check: падение/смерть потока ловим и откатываемся на loopback
+        checker = threading.Thread(
+            target=self._check_process_capture, args=(capture,), daemon=True)
+        checker.start()
+        logger.info(f"[GameAudio] Per-process capture started "
+                    f"(PID={pid}, app={self._game_name})")
+        return True
+
+    def _check_process_capture(self, capture):
+        """Health-check: откатываемся на loopback только при РЕАЛЬНОЙ поломке.
+
+        Раньше проверка срабатывала, если за 5 c не пришёл не-тихий пакет, —
+        но тишина в игре (загрузка, пауза диалога) не означает отказ захвата.
+        Теперь ориентируемся на состояние API и ошибки, а не на громкость.
+        """
+        time.sleep(self._proc_check_sec)
+        if not self._running or capture is not self._proc_capture:
+            return
+
+        failed = capture.last_error is not None or not capture.is_active()
+        if failed:
+            reason = capture.last_error or "capture thread is not active"
+            logger.warning(f"[GameAudio] Per-process capture failed "
+                           f"({reason}), falling back to system loopback")
+            try:
+                capture.stop()
+            except Exception:
+                pass
+            if capture is self._proc_capture:
+                self._proc_capture = None
+            self._running = False
+            self._start_loopback_capture()
+            return
+
+        if self._proc_audio_seen:
+            logger.info("[GameAudio] Per-process capture is delivering audio")
+        elif capture.packets_received:
+            logger.info("[GameAudio] Per-process capture is alive "
+                        f"({capture.packets_received} packets), source just quiet")
+        else:
+            logger.info("[GameAudio] Per-process capture is alive, "
+                        "no packets yet (game idle) — keeping it")
+
+    def _switch_capture_to(self, pid):
+        """Переключить захват на другой процесс (смена активного источника)."""
+        if not pid or pid == self._game_pid:
+            return
+        was_proc = self._proc_capture is not None
+        self._stop_streams()
+        self._running = False
+        self._game_pid = pid
+        if was_proc and self.per_process_enabled and PROC_CAP_AVAILABLE:
+            if self._start_process_capture(pid):
+                self._running = True
+                return
+        if self._start_loopback_capture():
+            self._running = True
+
+    def _start_loopback_capture(self) -> bool:
+        """Системный WASAPI loopback (видим всё, включая наш TTS)."""
         if not PYAUDIO_AVAILABLE:
             logger.error("[GameAudio] pyaudiowpatch not available")
-            return
+            return False
 
         loopbacks = self.get_loopback_devices()
         if not loopbacks:
             logger.error("[GameAudio] No WASAPI loopback device found")
-            return
+            return False
 
+        # ВАЖНО: _running поднимаем ДО старта потоков, иначе поток успевает
+        # увидеть _running == False и сразу закрыть только что открытый поток.
         self._running = True
+        self._active_streams = 0
         self._capture_threads = []
+
+        # Открываем устройства по приоритету и ОСТАНАВЛИВАЕМСЯ на первом
+        # успешном. Раньше открывались все сразу: кроме лишних ошибок это
+        # давало дублирование звука, а мёртвые CABLE-устройства открываются
+        # «успешно» (RMS ~0.00001) и молча тащат тишину в конвейер.
         for lb in loopbacks:
-            sr = int(lb['defaultSampleRate'])
-            ch = lb['maxInputChannels']
             t = threading.Thread(
                 target=self._capture_loop, args=(lb,), daemon=True)
             t.start()
             self._capture_threads.append(t)
-            logger.info(f"[GameAudio] Started capture: {lb['name']} (sr={sr})")
+            logger.info(f"[GameAudio] Trying capture: {lb['name']}")
+
+            deadline = time.time() + 2.0
+            while time.time() < deadline and self._active_streams == 0 \
+                    and self._running:
+                time.sleep(0.05)
+
+            if self._active_streams > 0:
+                logger.info(f"[GameAudio] Capture device chosen: {lb['name']}")
+                break
+            logger.warning(f"[GameAudio] {lb['name']}: not opened, trying next")
+
+        if self._active_streams == 0:
+            logger.error("[GameAudio] No loopback device could be opened")
+            self._running = False
+            return False
+        return True
 
     def _on_proc_audio(self, audio, sr):
         """Callback from per-process capture — feeds registered consumers."""
+        self._proc_audio_seen = True
         for cb in list(self._audio_callbacks):
             try:
                 cb(audio, sr)
@@ -365,6 +629,8 @@ class GameAudioCapture:
         """Per-process capture failed at runtime — fall back to system loopback."""
         logger.warning(f"[GameAudio] Per-process capture failed ({err}); "
                        f"falling back to system-wide loopback")
+        if self._game_pid:
+            self._proc_failed[int(self._game_pid)] = (time.time(), err)
         self._running = False
         self._proc_capture = None
         try:
@@ -372,22 +638,29 @@ class GameAudioCapture:
         except Exception as e:
             logger.error(f"[GameAudio] Fallback start failed: {e}")
 
-    def stop(self):
+    def _stop_streams(self):
+        """Остановить все потоки/потоки захвата без сброса состояния."""
         self._running = False
+        self._active_streams = 0
+        # Старые потоки захвата застрянут в read(); помечаем их устаревшими
+        self._gen += 1
         if getattr(self, "_proc_capture", None):
             try:
                 self._proc_capture.stop()
             except Exception:
                 pass
             self._proc_capture = None
-        # Wait for all capture threads to exit
-        for t in getattr(self, "_capture_threads", []):
+        for t in list(getattr(self, "_capture_threads", [])):
             if t.is_alive():
-                t.join(timeout=3.0)
+                t.join(timeout=2.0)
         self._capture_threads = []
         t = getattr(self, "_capture_thread", None)
         if t is not None and t.is_alive():
-            t.join(timeout=3.0)
+            t.join(timeout=2.0)
+        self._capture_thread = None
+        # НЕ закрываем потоки отсюда: stream закрывает сам поток захвата
+        # в finally. Закрытие из чужого потока во время read() роняло
+        # процесс с 0xC0000374 (повреждение кучи в PortAudio).
         if self._stream:
             try:
                 self._stream.stop_stream()
@@ -401,7 +674,14 @@ class GameAudioCapture:
             except Exception:
                 pass
             self._pa = None
-        # Restore default output device
+
+    def stop(self):
+        self._auto_target = False
+        monitor = getattr(self, "_auto_monitor", None)
+        if monitor and monitor.is_alive():
+            monitor.join(timeout=3.5)
+        self._auto_monitor = None
+        self._stop_streams()
         if self._vbcable_enabled:
             self._restore_default_output()
         logger.info("[GameAudio] Stopped")
@@ -424,8 +704,12 @@ class GameAudioCapture:
             )
 
             chunk_samples = int(device_sr * self._chunk_sec)
+            self._active_streams += 1
+            gen = self._gen          # «поколение» этого захвата
+            logger.info(f"[GameAudio] Listening: {loopback_info['name']} "
+                        f"(sr={device_sr}, ch={device_ch})")
 
-            while self._running:
+            while self._running and gen == self._gen:
                 try:
                     data = stream.read(chunk_samples, exception_on_overflow=False)
                     audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
@@ -445,14 +729,20 @@ class GameAudioCapture:
 
                 except Exception as e:
                     if self._running:
-                        logger.warning(f"[GameAudio] Read error ({loopback_info['name']}): {e}")
-                        time.sleep(0.1)
+                        # Устаревшее/занятое устройство (например, отключённый
+                        # VB-Cable) — молча прекращаем этот поток, остальные
+                        # loopback-устройства продолжают работать.
+                        logger.info(f"[GameAudio] Loopback '{loopback_info['name']}' "
+                                    f"unavailable: {e}")
+                        break
 
         except Exception as e:
-            logger.error(f"[GameAudio] Capture error ({loopback_info['name']}): {e}")
+            logger.warning(f"[GameAudio] Cannot open loopback "
+                           f"'{loopback_info.get('name', '?')}': {e}")
         finally:
             if stream:
                 try:
+                    self._active_streams = max(0, self._active_streams - 1)
                     stream.stop_stream()
                     stream.close()
                 except Exception:

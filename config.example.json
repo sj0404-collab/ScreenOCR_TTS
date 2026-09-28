@@ -1,7 +1,7 @@
 {
   "ocr": {
     "language": "rus+eng",
-    "engine": "tflite_cyrillic",
+    "engine": "google_lens",
     "content_preset": "balanced",
     "confidence_threshold": 40,
     "scan_interval_ms": 500,
