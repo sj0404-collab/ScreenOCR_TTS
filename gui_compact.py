@@ -124,6 +124,36 @@ class CompactWindow(QMainWindow):
         self.btn_live.clicked.connect(self._on_live_toggle)
         top_layout.addWidget(self.btn_live)
 
+        # ── Auto-Read: реальное время — скан + сразу озвучка ──
+        self._auto_read_active = False
+        self._auto_read_timer = QTimer()
+        self._auto_read_timer.timeout.connect(self._auto_read_tick)
+
+        self.btn_auto_read = QPushButton(f"▶ Speak")
+        self.btn_auto_read.setFixedHeight(32)
+        self.btn_auto_read.setFixedWidth(110)
+        self.btn_auto_read.setCheckable(True)
+        self.btn_auto_read.setToolTip("Auto-Read: сканирует и озвучивает (Ctrl+Shift+F7)")
+        self.btn_auto_read.setStyleSheet(
+            "QPushButton { background: #1a3a1a; color: #777; border: 2px solid #333; border-radius: 5px; font-weight: bold; }"
+            "QPushButton:hover { background: #1e4a1e; }"
+            "QPushButton:checked { background: #0d5a0d; color: #4cff4c; border-color: #4cff4c; }"
+        )
+        self.btn_auto_read.clicked.connect(self._toggle_auto_read)
+        top_layout.addWidget(self.btn_auto_read)
+
+        self.auto_read_led = QLabel("●")
+        self.auto_read_led.setFixedWidth(16)
+        self.auto_read_led.setStyleSheet("color: #333; font-size: 14px;")
+        self.auto_read_led.setToolTip("Auto-Read: OFF")
+        top_layout.addWidget(self.auto_read_led)
+
+        self.btn_preview = QPushButton(f"🖥 Preview")
+        self.btn_preview.setFixedHeight(28)
+        self.btn_preview.setToolTip("Предпросмотр захваченной области игры")
+        self.btn_preview.clicked.connect(self._toggle_game_preview)
+        top_layout.addWidget(self.btn_preview)
+
         self.btn_tts = QPushButton(f"{ICON['tts']} TTS")
         self.btn_tts.setFixedHeight(28)
         self.btn_tts.clicked.connect(self._on_speak)
@@ -270,6 +300,7 @@ class CompactWindow(QMainWindow):
         ocr_layout.addWidget(QLabel("Engine:"), 1, 0)
         self.engine_combo = QComboBox()
         self._engine_id_map = {
+            "Google Lens": "google_lens",
             "TFLite Cyrillic": "tflite_cyrillic",
             "RapidOCR": "rapidocr",
             "EasyOCR": "easyocr",
@@ -421,6 +452,8 @@ class CompactWindow(QMainWindow):
         self._init_scanner()
         self._init_tray()
         self._load_voices()
+        self._init_game_preview()
+        self._init_global_hotkeys()
 
         # TTS speaking indicator poll (covers Speak button + live mode)
         self._tts_poll = QTimer(self)
@@ -701,15 +734,15 @@ class CompactWindow(QMainWindow):
     def _init_ocr(self):
         from ocr_wrapper import OCRWrapper
         self.ocr = OCRWrapper(self.settings)
-        engine = self.settings.get("ocr.engine", "tflite_cyrillic")
+        engine = self.settings.get("ocr.engine", "google_lens")
         logger.info(f"[OCR] Engine: {engine}")
-        # Sync engine combo with active engine (default: TFLite Cyrillic)
+        # Sync engine combo with active engine (default: Google Lens)
         try:
             if engine == "cyrillic_onnx":
                 engine = "tflite_cyrillic"
             self.engine_combo.blockSignals(True)
             self.engine_combo.setCurrentText(
-                self._engine_name_map.get(engine, "TFLite Cyrillic"))
+                self._engine_name_map.get(engine, "Google Lens"))
             self.engine_combo.blockSignals(False)
         except Exception:
             pass
@@ -720,7 +753,7 @@ class CompactWindow(QMainWindow):
         self.engine_combo.currentTextChanged.connect(self._on_engine_changed)
 
     def _on_engine_changed(self, name):
-        engine_id = self._engine_id_map.get(name, "tflite_cyrillic")
+        engine_id = self._engine_id_map.get(name, "google_lens")
         self.settings.set("ocr.engine", engine_id)
         try:
             from ocr_wrapper import OCRWrapper
@@ -884,6 +917,54 @@ class CompactWindow(QMainWindow):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.showNormal()
             self.activateWindow()
+
+    # ═══════════════════════════════════════════════
+    # GAME PREVIEW + STATUS ICONS
+    # ═══════════════════════════════════════════════
+
+    def _init_game_preview(self):
+        """Инициализация окна предпросмотра игры и панели иконок."""
+        from game_preview import GamePreview, StatusIcons
+        region = self.regions[0] if self.regions else {"x": 0, "y": 0, "width": 800, "height": 450}
+
+        # Окно предпросмотра игры
+        self.game_preview = GamePreview(region=region)
+
+        # Плавающая панель иконок (отдельное окно, маленькое, в углу экрана)
+        self.status_icons = StatusIcons()
+        self.status_icons.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.status_icons.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.status_icons.resize(150, 28)
+        # Разместить в правом нижнем углу
+        try:
+            geo = QApplication.primaryScreen().availableGeometry()
+            self.status_icons.move(geo.right() - 160, geo.bottom() - 40)
+        except Exception:
+            pass
+
+        logger.info("[GAME-PREVIEW] Initialized")
+
+    def _toggle_game_preview(self):
+        """Показать/скрыть окно предпросмотра игры."""
+        if not hasattr(self, 'game_preview'):
+            return
+        if self.game_preview.isVisible():
+            self.game_preview.hide()
+        else:
+            # Обновить регион
+            if self.regions:
+                self.game_preview.set_region(self.regions[0])
+            self.game_preview.show()
+            self.game_preview.raise_()
+
+    def _update_game_preview(self, pil_img):
+        """Обновить кадр в окне предпросмотра."""
+        if hasattr(self, 'game_preview') and self.game_preview.isVisible():
+            self.game_preview.update_frame(pil_img)
 
     def _voice_float(self):
         """Tiny always-on-top speaker shown only while voice is playing."""
@@ -1059,6 +1140,413 @@ class CompactWindow(QMainWindow):
         self.btn_live.setText(f"{ICON['live_on']} Live")
         self.status_label.setText("Live stopped")
 
+    # ═══════════════════════════════════════════════
+    # AUTO-READ: реальное время — скан + сразу озвучка
+    # ═══════════════════════════════════════════════
+
+    def _toggle_auto_read(self, checked=None):
+        """Включение/выключение режима Auto-Read (F7).
+        Непрерывно сканирует экран через GlensOCR и сразу озвучивает распознанный текст."""
+        if checked is None:
+            checked = not self._auto_read_active
+
+        if checked:
+            self._start_auto_read()
+        else:
+            self._stop_auto_read()
+
+    def _start_auto_read(self):
+        """Запуск Auto-Read: скан каждые N мс + TTS каждого нового текста."""
+        if self._auto_read_active:
+            return
+        if not hasattr(self, 'ocr') or not self.ocr:
+            self.status_label.setText("Auto-Read: OCR not ready")
+            return
+
+        self._auto_read_active = True
+        self._auto_read_last_text = ""
+
+        # Визуальная индикация — кнопка "горит"
+        self.btn_auto_read.setChecked(True)
+        self.btn_auto_read.setText(f"⏹ Stop")
+        self.btn_auto_read.setStyleSheet(
+            "QPushButton { background: #0d5a0d; color: #4cff4c; border: 2px solid #4cff4c; border-radius: 5px; font-weight: bold; }"
+            "QPushButton:hover { background: #0a4a0a; }"
+        )
+        self.auto_read_led.setStyleSheet("color: #4cff4c; font-size: 14px;")
+        self.auto_read_led.setToolTip("Auto-Read: ON — сканирует и озвучивает")
+
+        # Показать панель статус-иконок
+        if hasattr(self, 'status_icons'):
+            self.status_icons.show_all_off()
+            self.status_icons.show()
+            self.status_icons.raise_()
+
+        # Показать окно предпросмотра игры
+        if hasattr(self, 'game_preview'):
+            if self.regions:
+                self.game_preview.set_region(self.regions[0])
+            self.game_preview.show()
+            self.game_preview.raise_()
+
+        # Запуск TTS стриминга
+        if hasattr(self, 'scanner') and self.scanner:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(self.scanner.start_tts_streaming())
+            except Exception:
+                pass
+
+        # Таймер сканирования (каждые 800 мс)
+        interval = self.interval.value() if hasattr(self, 'interval') else 800
+        # Для GlensOCR (联网) — не чаще 1 раза в секунду
+        interval = max(interval, 1000)
+        self._auto_read_timer.start(interval)
+        self.status_label.setText(f"Auto-Read: ON — скан каждые {interval}мс")
+
+        # ══════ Запуск Voice Translator (VAD + STT) для лайв-звука ══════
+        audio_lang = self.settings.get("game.audio_language", "auto")
+        dual = self.settings.get("game.auto_repeat_en", False)
+        vad = self.settings.get("game.voice_activity_detection", True)
+        if audio_lang != "off":
+            try:
+                from voice_translator import voice_translator
+                self._voice_translator = voice_translator
+                voice_translator.tts = self.tts
+                if audio_lang in ("en", "auto"):
+                    voice_translator.set_languages("en", "ru")
+                else:
+                    voice_translator.set_languages(audio_lang, "ru")
+                voice_translator.set_dual_mode(dual)
+                voice_translator.set_vad(vad)
+                voice_translator.on_voice_detected = lambda is_v: self._gui(
+                    lambda iv=is_v: self.status_icons.pulse("voice", 500) if iv else None)
+                voice_translator.start()
+                logger.info(f"[AUTO-READ] VoiceTranslator started (audio={audio_lang}, dual={dual}, vad={vad})")
+            except Exception as e:
+                logger.warning(f"[AUTO-READ] VoiceTranslator start failed: {e}")
+
+        logger.info(f"[AUTO-READ] Запущен (interval={interval}ms)")
+
+    def _stop_auto_read(self):
+        """Остановка Auto-Read."""
+        if not self._auto_read_active:
+            return
+
+        self._auto_read_active = False
+        self._auto_read_timer.stop()
+
+        # Визуальная индикация — кнопка погасла
+        self.btn_auto_read.setChecked(False)
+        self.btn_auto_read.setText(f"▶ Speak")
+        self.btn_auto_read.setStyleSheet(
+            "QPushButton { background: #1a3a1a; color: #777; border: 2px solid #333; border-radius: 5px; font-weight: bold; }"
+            "QPushButton:hover { background: #1e4a1e; }"
+            "QPushButton:checked { background: #0d5a0d; color: #4cff4c; border-color: #4cff4c; }"
+        )
+        self.auto_read_led.setStyleSheet("color: #333; font-size: 14px;")
+        self.auto_read_led.setToolTip("Auto-Read: OFF")
+
+        # Скрыть панель иконок
+        if hasattr(self, 'status_icons'):
+            self.status_icons.show_all_off()
+            self.status_icons.hide()
+
+        # Скрыть окно предпросмотра
+        if hasattr(self, 'game_preview'):
+            self.game_preview.hide()
+
+        # Остановка TTS
+        if hasattr(self, 'tts') and self.tts:
+            try:
+                self.tts.force_stop()
+            except Exception:
+                pass
+
+        # Остановка стриминга
+        if hasattr(self, 'scanner') and self.scanner:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(self.scanner.stop_tts_streaming())
+            except Exception:
+                pass
+
+        # ══════ Остановка Voice Translator ══════
+        if hasattr(self, '_voice_translator') and self._voice_translator:
+            try:
+                self._voice_translator.stop()
+                logger.info("[AUTO-READ] VoiceTranslator stopped")
+            except Exception as e:
+                logger.warning(f"[AUTO-READ] VoiceTranslator stop error: {e}")
+
+        self.status_label.setText("Auto-Read: OFF")
+        logger.info("[AUTO-READ] Остановлен")
+
+    def _auto_read_tick(self):
+        """Один тик Auto-Read: захват экрана → GlensOCR → показ + озвучка нового текста."""
+        if not self._auto_read_active:
+            return
+
+        # Запускаем в фоновом потоке, чтобы не блокировать GUI
+        threading.Thread(target=self._auto_read_scan, daemon=True).start()
+
+    def _auto_read_scan(self):
+        """Сканирование одного кадра для Auto-Read (в фоновом потоке).
+
+        Иконки мигают на каждом этапе:
+          🎬 capture  — захват кадра
+          🔍 scan     — OCR running
+          ✅ recognize — текст получен
+          📦 buffer   — TTS поставлен в очередь
+          🎵 voice    — голос звучит
+        """
+        try:
+            import mss, time
+            from PIL import Image
+            import numpy as np
+
+            # ══════ 🎬 ЗАХВАТ КАДРА ══════
+            self._gui(lambda: self.status_icons.pulse("capture", 400))
+
+            img = None
+            if hasattr(self.ocr, 'capture_region'):
+                img = self.ocr.capture_region()
+            if img is None:
+                regions = self.regions if self.regions else [{"x": 0, "y": 0, "width": 800, "height": 200}]
+                r = regions[0]
+                with mss.mss() as sct:
+                    monitor = {"left": r["x"], "top": r["y"], "width": r["width"], "height": r["height"]}
+                    shot = sct.grab(monitor)
+                    img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
+            if img is None:
+                return
+
+            # Обновить окно предпросмотра
+            self._gui(lambda i=img: self._update_game_preview(i))
+
+            # ══════ ЗАЩИТА ОТ АНИМАЦИЙ / РАЗМЫТИЯ ══════
+
+            # 1) Детекция размытия (Laplacian variance)
+            #    Низкое значение = кадр размыт (анимация, переход)
+            gray = np.array(img.convert("L"), dtype=np.float32)
+            # Уменьшаем для быстрого расчёта
+            small = gray[::4, ::4]  # 1/4 размера
+            laplacian = np.array([
+                [-1, -1, -1],
+                [-1,  8, -1],
+                [-1, -1, -1]
+            ], dtype=np.float32)
+            h, w = small.shape
+            if h < 3 or w < 3:
+                return
+            try:
+                from scipy.signal import convolve2d
+                lap = convolve2d(small, laplacian, mode='valid')
+            except ImportError:
+                # Fallback: ручная卷积 без scipy
+                lap = np.zeros((h-2, w-2), dtype=np.float32)
+                for i in range(1, h-1):
+                    for j in range(1, w-1):
+                        lap[i-1, j-1] = (
+                            -small[i-1,j-1] - small[i-1,j] - small[i-1,j+1]
+                            -small[i,j-1]   + 8*small[i,j]  - small[i,j+1]
+                            -small[i+1,j-1] - small[i+1,j]  - small[i+1,j+1]
+                        )
+            blur_score = float(np.var(lap))
+
+            # Порог размытия: если < 500 — кадр размыт (анимация/переход)
+            # Нормальный экран: score > 5000, лёгкое размытие: 200-1000, сильное: < 50
+            BLUR_THRESHOLD = 500.0
+            if blur_score < BLUR_THRESHOLD:
+                logger.debug(f"[AUTO-READ] Кадр размыт (blur={blur_score:.1f}), пропускаем")
+                return
+
+            # 2) Сравнение с предыдущим кадром (стабильность)
+            #    Если кадр сильно отличается — идёт переход/анимация
+            if not hasattr(self, '_auto_read_prev_frame'):
+                self._auto_read_prev_frame = small.copy()
+            else:
+                diff = float(np.mean(np.abs(small - self._auto_read_prev_frame)))
+                self._auto_read_prev_frame = small.copy()
+
+                # Если разница > 30 — кадр резко изменился (переход)
+                TRANSITION_THRESHOLD = 30.0
+                if diff > TRANSITION_THRESHOLD:
+                    logger.debug(f"[AUTO-READ] Переход detected (diff={diff:.1f}), пропускаем")
+                    return
+
+            # ══════ 🔍 OCR ══════
+            self._gui(lambda: self.status_icons.pulse("scan", 600))
+
+            t0 = time.perf_counter()
+            result = self.ocr.recognize(img)
+            elapsed = time.perf_counter() - t0
+            text = result[0] if isinstance(result, tuple) else str(result)
+            confidence = result[1] if isinstance(result, tuple) and len(result) > 1 else 0.0
+
+            if not text or not text.strip():
+                return
+
+            # 3) Фильтрация по confidence: GlensOCR возвращает 95 при успехе,
+            #    мусорный текст будет иметь низкий confidence
+            if confidence < 30.0:
+                logger.debug(f"[AUTO-READ] Низкий confidence ({confidence:.0f}%), пропускаем")
+                return
+
+            # 4) Фильтрация мусора: строки < 3 символов или全是 спецсимволы
+            lines = text.strip().split('\n')
+            clean_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if len(stripped) < 3:
+                    continue
+                alpha_count = sum(1 for c in stripped if c.isalpha())
+                if alpha_count < 2:
+                    continue
+                clean_lines.append(stripped)
+            text = '\n'.join(clean_lines)
+            if not text.strip():
+                return
+
+            # ══════ АВТО-ПОЧИНКА МУСОРА ══════
+
+            raw_text = text
+
+            # Полный пайплайн очистки OCR (lookalikes, переносы, мусорные токены)
+            try:
+                from ocr_text_cleaner import (
+                    full_clean_pipeline, normalize_alphabets,
+                    fix_lookalikes_per_word, filter_garbage_tokens,
+                )
+                text = full_clean_pipeline(text, engine_type="google_lens")
+            except ImportError:
+                pass
+
+            # Доп. фиксы из ocr_wrapper: гомоглифы, изолированная латиница, регистр
+            try:
+                from ocr_wrapper import OCRWrapper
+                tmp = OCRWrapper(self.settings)
+                text = tmp._normalize_alphabets(text)
+                text = tmp._strip_isolated_latin(text)
+                text = tmp._filter_by_language(text)
+            except Exception:
+                pass
+
+            # Русские OCR-ошибки: "тадовати" → "Тадовати", "нагpaды" → "Награды"
+            try:
+                from ocr_wrapper import _apply_russian_fixes, _apply_known_corrections
+                text = _apply_russian_fixes(text)
+                text = _apply_known_corrections(text)
+            except ImportError:
+                pass
+
+            # ══════ ЯЗЫКОВОЙ ФИЛЬТР ══════
+            # Если text_language="ru" — оставляем только кириллицу + цифры
+            # Если text_language="auto" — всё как есть (лайв-режим, читаем всё из игры)
+            game_text_lang = self.settings.get("game.text_language", "ru")
+            if game_text_lang == "ru":
+                filtered_lines = []
+                for line in text.split('\n'):
+                    stripped = line.strip()
+                    # Оставляем строки где есть кириллица
+                    has_cyrillic = any('\u0400' <= c <= '\u04ff' for c in stripped)
+                    if has_cyrillic:
+                        # Убираем чисто латинские слова (но цифры и знаки оставляем)
+                        words = stripped.split()
+                        kept = []
+                        for w in words:
+                            is_latin_only = all(c.isascii() and c.isalpha() for c in w)
+                            if not is_latin_only:
+                                kept.append(w)
+                        if kept:
+                            filtered_lines.append(' '.join(kept))
+                text = '\n'.join(filtered_lines)
+                if not text.strip():
+                    return
+
+            # Если после починки текст стал пустым — берём raw
+            if not text or not text.strip():
+                text = raw_text
+
+            # Убираем пустые строки после починки
+            text = '\n'.join(l for l in text.split('\n') if l.strip())
+            if not text.strip():
+                return
+
+            # ══════ ДЕДУПЛИКАЦИЯ ══════
+
+            normalized = ' '.join(text.strip().lower().split())
+            if normalized == self._auto_read_last_text:
+                return
+            self._auto_read_last_text = normalized
+
+            # ✅ Текст распознан и починен
+            self._gui(lambda: self.status_icons.pulse("recognize", 500))
+
+            # Показ очищенного текста в GUI
+            self._gui(lambda t=text: self._on_text_detected(t))
+            self._gui(lambda t=text, c=confidence, e=elapsed:
+                      self.status_label.setText(f"Auto-Read: {e:.1f}s | {len(t)} chars | conf={c:.0f}%"))
+
+            # 📦 Буферизация TTS
+            if self._auto_read_active:
+                self._gui(lambda: self.status_icons.pulse("buffer", 500))
+                try:
+                    if hasattr(self.tts, 'is_playing') and self.tts.is_playing:
+                        self.tts.force_stop()
+                    threading.Thread(
+                        target=lambda t=text: self._safe_speak(t),
+                        daemon=True
+                    ).start()
+                except Exception as e:
+                    logger.error(f"[AUTO-READ] TTS error: {e}")
+
+        except Exception as e:
+            logger.error(f"[AUTO-READ] Scan error: {e}")
+
+    def _safe_speak(self, text):
+        """Безопасная озвучка в отдельном потоке. Мигает 🎵 voice пока говорит.
+
+        Замедление берётся из game.tts_rate_auto_read (по умолчанию -30).
+        """
+        try:
+            # 🎵 Voice ON
+            self._gui(lambda: self.status_icons.pulse("voice", 3000))
+
+            # Замедление для авто-чтения из конфига
+            auto_rate = self.settings.get("game.tts_rate_auto_read", -30)
+
+            # Запоминаем текущую скорость и замедляем для авто-чтения
+            old_rate = self.tts.rate
+            old_role_rates = {}
+            for role in getattr(self.tts, 'role_settings', {}):
+                old_role_rates[role] = self.tts.role_settings[role].get("rate", 0)
+                self.tts.role_settings[role]["rate"] = auto_rate
+
+            self.tts.rate = auto_rate
+
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(self.tts.speak(text))
+                loop.close()
+            finally:
+                # Восстанавливаем скорость
+                self.tts.rate = old_rate
+                for role, r in old_role_rates.items():
+                    if role in self.tts.role_settings:
+                        self.tts.role_settings[role]["rate"] = r
+
+        except Exception as e:
+            logger.error(f"[AUTO-READ] speak error: {e}")
+
+    # ═══════════════════════════════════════════════
+
     def _on_speak(self):
         text = self.result_text.toPlainText()
         if text:
@@ -1067,9 +1555,22 @@ class CompactWindow(QMainWindow):
 
     def _speak_and_reset(self, text):
         try:
-            self.tts.speak(text)
+            import asyncio
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self.tts.speak(text))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"[TTS] speak error: {e}")
         finally:
             self._gui(lambda: self._update_tts_icon())
+
+    def _speak_text(self, text, lang="ru"):
+        """Озвучить текст в отдельном потоке (для кнопки Speak RU и т.д.)."""
+        if not text or not text.strip():
+            return
+        threading.Thread(target=lambda: self._speak_and_reset(text), daemon=True).start()
 
     def _on_stop_speak(self):
         if hasattr(self.tts, 'force_stop'):
@@ -1243,7 +1744,74 @@ class CompactWindow(QMainWindow):
     def _gui(self, fn):
         self.gui_invoke.emit(fn)
 
+    # ═══════════════════════════════════════════════
+    # ГОРЯЧИЕ КЛАВИШИ
+    # ═══════════════════════════════════════════════
+
+    def keyPressEvent(self, event):
+        """Обработка горячих клавиш (только когда окно в фокусе):
+          F7 — Auto-Read
+          F9 — однократное сканирование
+          Escape — остановить Auto-Read
+
+        Глобальные (из любого окна):
+          Ctrl+Shift+F7 — Auto-Read toggle
+          Ctrl+Shift+F8 — Stop
+          Ctrl+Shift+F9 — Scan
+        """
+        key = event.key()
+        if key == Qt.Key.Key_F7:
+            self._toggle_auto_read()
+        elif key == Qt.Key.Key_F9:
+            self._on_scan()
+        elif key == Qt.Key.Key_Escape:
+            if self._auto_read_active:
+                self._stop_auto_read()
+        else:
+            super().keyPressEvent(event)
+
+    def _init_global_hotkeys(self):
+        """Глобальные горячие клавиши через `keyboard` (работают из любого окна)."""
+        self._global_hotkey_hooks = []
+        try:
+            import keyboard
+
+            def _cb_toggle():
+                # Вызываем из GUI потока
+                self._gui(self._toggle_auto_read)
+
+            def _cb_scan():
+                self._gui(self._on_scan)
+
+            def _cb_stop():
+                if self._auto_read_active:
+                    self._gui(self._stop_auto_read)
+                if hasattr(self.tts, 'is_playing') and self.tts.is_playing:
+                    self._gui(self.tts.force_stop)
+
+            keyboard.add_hotkey('ctrl+shift+f7', _cb_toggle)
+            keyboard.add_hotkey('ctrl+shift+f9', _cb_scan)
+            keyboard.add_hotkey('ctrl+shift+f8', _cb_stop)
+            self._global_hotkey_hooks = True
+            logger.info("[HOTKEYS] Global: Ctrl+Shift+F7=Toggle, Ctrl+Shift+F8=Stop, Ctrl+Shift+F9=Scan")
+        except ImportError:
+            logger.warning("[HOTKEYS] `keyboard` not installed, global hotkeys disabled")
+        except Exception as e:
+            logger.warning(f"[HOTKEYS] Global hotkey init error: {e}")
+
+    def _cleanup_global_hotkeys(self):
+        """Отключение глобальных горячих клавиш."""
+        try:
+            import keyboard
+            keyboard.unhook_all()
+        except Exception:
+            pass
+
     def closeEvent(self, event):
+        # Остановить Auto-Read перед закрытием
+        if self._auto_read_active:
+            self._stop_auto_read()
+        self._cleanup_global_hotkeys()
         if hasattr(self, 'scanner'):
             self.scanner.stop()
         if hasattr(self, 'tray_icon'):

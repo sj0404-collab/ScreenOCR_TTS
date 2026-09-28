@@ -1,4 +1,4 @@
-﻿"""
+"""
 Screen OCR + TTS - GUI for text recognition and speech synthesis.
 
 The interface code in this module is kept fully in English. Every
@@ -4688,7 +4688,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("translator_copy"), 2000)
 
     def _on_check_translation(self):
-        """Слот: проверить соединение с OpenRouter."""
+        """Слот: проверить соединение с переводчиком (Zen, без ключа)."""
         api_key = self.settings_translate_apikey_input.text().strip()
         model = self.settings_translate_model_combo.currentText().strip()
         self.settings_translate_result.setText(tr("translate_check_loading"))
@@ -4697,7 +4697,8 @@ class MainWindow(QMainWindow):
         def _do_check():
             try:
                 from translator import translator
-                r = translator.test_connection(api_key, model)
+                # OrcaRouter/OpenRouter удалены; проверяем Zen.
+                r = translator.test_connection(api_key, model, engine="zen")
                 if r["ok"]:
                     msg = (
                         f"<span style='color:#a6e3a1;'>✓ {r['message']}</span><br>"
@@ -4785,9 +4786,9 @@ class MainWindow(QMainWindow):
         engine_layout.addWidget(QLabel(tr("lbl_engine")))
         self.settings_engine_combo = QComboBox()
         self.settings_engine_combo.addItems([
+            "Google Lens",
             "TFLite Cyrillic",
             "EasyOCR",
-            "Google Lens",
         ])
         # Map display names to engine IDs
         self._engine_id_map = {
@@ -4796,13 +4797,13 @@ class MainWindow(QMainWindow):
             "Google Lens": "google_lens",
         }
         self._engine_name_map = {v: k for k, v in self._engine_id_map.items()}
-        current_engine = self.settings.get("ocr.engine", "tflite_cyrillic")
+        current_engine = self.settings.get("ocr.engine", "google_lens")
         if current_engine == "cyrillic_onnx":
             current_engine = "tflite_cyrillic"
-        current_name = self._engine_name_map.get(current_engine, "TFLite Cyrillic")
+        current_name = self._engine_name_map.get(current_engine, "Google Lens")
         self.settings_engine_combo.setCurrentText(current_name)
         self.settings_engine_combo.currentTextChanged.connect(
-            lambda v: self.settings.set("ocr.engine", self._engine_id_map.get(v, "tflite_cyrillic"))
+            lambda v: self.settings.set("ocr.engine", self._engine_id_map.get(v, "google_lens"))
         )
         engine_layout.addWidget(self.settings_engine_combo)
         ocr_layout.addLayout(engine_layout)
@@ -5024,7 +5025,7 @@ class MainWindow(QMainWindow):
         trans_dst_layout.addWidget(self.settings_translate_dst_combo)
         trans_tts_layout.addLayout(trans_dst_layout)
 
-        # OpenRouter API Key
+        # Ключ API (не требуется для Zen, оставлен для совместимости)
         trans_apikey_layout = QHBoxLayout()
         trans_apikey_layout.addWidget(QLabel(tr("lbl_translate_apikey")))
         self.settings_translate_apikey_input = QLineEdit()
@@ -5037,17 +5038,15 @@ class MainWindow(QMainWindow):
         trans_apikey_layout.addWidget(self.settings_translate_apikey_input)
         trans_tts_layout.addLayout(trans_apikey_layout)
 
-        # OpenRouter Model
+        # Модель перевода: Zen (бесплатно, без ключа).
+        # Модели OpenRouter/OrcaRouter удалены вместе с провайдерами
+        # (404 / 403) 26.09.2026.
         trans_model_layout = QHBoxLayout()
         trans_model_layout.addWidget(QLabel(tr("lbl_translate_model")))
         self.settings_translate_model_combo = QComboBox()
         self.settings_translate_model_combo.setEditable(True)
         _default_models = [
-            "openai/gpt-oss-120b:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "google/gemma-4-31b-it:free",
-            "qwen/qwen3-coder:free",
+            "space-bunny-free",
         ]
         self.settings_translate_model_combo.addItems(_default_models)
         saved_model = self.settings.get("translation.model", "")
