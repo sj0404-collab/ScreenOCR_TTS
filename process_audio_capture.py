@@ -13,9 +13,14 @@ import logging
 import sys
 import threading
 import ctypes
+import time
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Старый (нерабочий) путь изоляции по процессу. Не включаем, пока не будет
+# реализована активация через ActivateAudioInterfaceAsync — см. is_supported().
+EXPERIMENTAL_SETCLIENTPROPERTIES = False
 
 try:
     import comtypes
@@ -176,7 +181,26 @@ if COMTYPES_AVAILABLE:
 
 
 def is_supported():
-    """True if the OS supports per-process loopback (Win10 2004+)."""
+    """True only if the WORKING per-process API path is enabled.
+
+    ВНИМАНИЕ: старый путь через IAudioClient2::SetClientProperties +
+    AudioClientProperties.bIsProcessLoopback нерабочий — такого поля в
+    структуре AudioClientProperties нет в SDK, а IID интерфейса был неверный
+    (COM отвечал «Класс не зарегистрирован»).
+
+    Корректный способ (Windows-classic-samples/ApplicationLoopback):
+        ActivateAudioInterfaceAsync(
+            VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, IID_IAudioClient,
+            &AUDIOCLIENT_ACTIVATION_PARAMS{ActivationType=
+                AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+                ProcessLoopbackParams.TargetProcessId=pid}, ...)
+    и затем обычный IAudioClient на виртуальном устройстве.
+
+    Пока это не реализовано, честно отвечаем False и работаем через
+    системный loopback (он проверен, а эхо режет анти-петля в STT).
+    """
+    if not EXPERIMENTAL_SETCLIENTPROPERTIES:
+        return False
     if not COMTYPES_AVAILABLE:
         return False
     try:
@@ -223,6 +247,16 @@ class ProcessLoopbackCapture:
         self.channels = 2
         self._client = None
         self._capture = None
+        # Метрики здоровья: пакеты считаем ДО отсечения тишины, иначе
+        # молчащая игра выглядит как «захват не работает».
+        self.packets_received = 0
+        self.last_packet_at = 0.0
+        self.last_error = None
+
+    def is_active(self) -> bool:
+        """Захват реально инициализирован (API запущен) и поток жив."""
+        return bool(self._started and self._running and self._thread
+                    and self._thread.is_alive())
 
     def start(self):
         if self._running:
@@ -313,6 +347,9 @@ class ProcessLoopbackCapture:
                         ppdata, nframes.value, wave_fmt)
                     if audio is None:
                         continue
+                    # Пакет пришёл => процесс-источник жив (даже если тихо)
+                    self.packets_received += 1
+                    self.last_packet_at = time.time()
                     peak = float(np.abs(audio).max())
                     if peak < self.silence_threshold:
                         continue
@@ -324,6 +361,7 @@ class ProcessLoopbackCapture:
                     cap.ReleaseBuffer(nframes.value)
         except Exception as e:
             logger.error(f"[ProcCapture] Capture error (PID={self.pid}): {e}")
+            self.last_error = e
             # Notify owner so it can fall back to system loopback
             try:
                 if self.on_error:
