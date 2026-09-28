@@ -2,16 +2,19 @@
 Online OCR модули — OCR через облачные API.
 
 Поддерживаемые сервисы:
-  1. OrcaRouter — бесплатные LLM модели (qwen, deepseek, etc.)
-  2. Zen (opencode.ai) — бесплатный, без ключа
-  3. OpenRouter — требует API-ключ
-  4. Google Lens — бесплатный OCR через Google Lens API
+  1. Zen (opencode.ai) — бесплатный, без ключа
+  2. Google Lens — бесплатный OCR через Google Lens API
 
 Все движки используют vision-модели для распознавания текста с изображений.
+
+Удалено 26.09.2026:
+  * OrcaRouterOCR — api.orcarouter.ai отдаёт 404;
+  * OpenRouterOCR — ключ из настроек отклоняется с 403.
 """
 import base64
 import io
 import logging
+import os
 import requests
 from PIL import Image
 
@@ -50,58 +53,16 @@ class OnlineOCREngine:
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-class OrcaRouterOCR(OnlineOCREngine):
-    """OCR через OrcaRouter (бесплатные LLM модели)."""
-
-    ENDPOINT = "https://api.orcarouter.ai/v1/chat/completions"
-    DEFAULT_MODEL = "qwen/qwen3.8-27b-free"
-
-    def recognize(self, image: Image.Image, prompt: str = "") -> str:
-        if not self.api_key:
-            raise ValueError("OrcaRouter API key is empty")
-
-        b64 = self._image_to_base64(image)
-        ocr_prompt = prompt or (
-            "Perform STRICT OPTICAL CHARACTER RECOGNITION (OCR) ONLY. "
-            "Transcribe the exact text from this image verbatim. "
-            "Do not translate, explain, or add any commentary. "
-            "Output ONLY the raw text."
-        )
-
-        resp = requests.post(
-            self.ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model or self.DEFAULT_MODEL,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": ocr_prompt},
-                        {"type": "image_url", "image_url": {
-                            "url": f"data:image/jpeg;base64,{b64}"
-                        }}
-                    ]
-                }],
-                "temperature": 0.0,
-                "max_tokens": 2048,
-            },
-            timeout=_TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return content.strip() if content else ""
-
-
 class ZenOCR(OnlineOCREngine):
-    """OCR через Zen API (бесплатный, без ключа)."""
+    """OCR через Zen API (бесплатный, без ключа).
+
+    ВНИМАНИЕ: почти все free-модели Zen отдают 403 FreeTierError
+    («can only be used from within OpenCode»). Проверено 26.09.2026 —
+    из внешнего приложения работает только space-bunny-free.
+    """
 
     ENDPOINT = "https://opencode.ai/zen/v1/chat/completions"
-    DEFAULT_MODEL = "mimo-v2.5-free"
+    DEFAULT_MODEL = "space-bunny-free"
 
     def recognize(self, image: Image.Image, prompt: str = "") -> str:
         b64 = self._image_to_base64(image)
@@ -141,61 +102,16 @@ class ZenOCR(OnlineOCREngine):
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         return content.strip() if content else ""
 
-
-class OpenRouterOCR(OnlineOCREngine):
-    """OCR через OpenRouter API."""
-
-    ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free"
-
-    def recognize(self, image: Image.Image, prompt: str = "") -> str:
-        if not self.api_key:
-            raise ValueError("OpenRouter API key is empty")
-
-        b64 = self._image_to_base64(image)
-        ocr_prompt = prompt or (
-            "Perform STRICT OPTICAL CHARACTER RECOGNITION (OCR) ONLY. "
-            "Transcribe the exact text from this image verbatim. "
-            "Do not translate, explain, or add any commentary. "
-            "Output ONLY the raw text."
-        )
-
-        resp = requests.post(
-            self.ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/sj0404-collab/overlay-translator",
-                "X-Title": "ScreenOCR_TTS",
-            },
-            json={
-                "model": self.model or self.DEFAULT_MODEL,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": ocr_prompt},
-                        {"type": "image_url", "image_url": {
-                            "url": f"data:image/jpeg;base64,{b64}"
-                        }}
-                    ]
-                }],
-                "temperature": 0.0,
-                "max_tokens": 2048,
-            },
-            timeout=_TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return content.strip() if content else ""
 
 
 class GoogleLensOCR(OnlineOCREngine):
     """OCR через Google Lens API (protobuf endpoint)."""
 
     ENDPOINT = "https://lensfrontend-pa.googleapis.com/v1/crupload"
-    DEFAULT_KEY = "AIzaSyDr2UxVnv_U85AbhhY8XSHSIavUW0DC-sY"
+    # Ключ НЕ хранится в коде: он берётся из настроек (ocr.online_api_key)
+    # или из переменной окружения. Раньше здесь был захардкоженный ключ —
+    # он попадал в репозиторий вместе с исходниками.
+    DEFAULT_KEY = os.environ.get("GOOGLE_LENS_API_KEY", "")
 
     def recognize(self, image: Image.Image, prompt: str = "") -> str:
         """Распознавание через Google Lens protobuf API."""
@@ -216,9 +132,7 @@ class GoogleLensOCR(OnlineOCREngine):
 def create_online_ocr(engine: str, api_key: str = "", model: str = "") -> OnlineOCREngine:
     """Создаёт онлайн OCR движок по имени."""
     engines = {
-        "orcarouter": OrcaRouterOCR,
         "zen": ZenOCR,
-        "openrouter": OpenRouterOCR,
         "google_lens": GoogleLensOCR,
     }
     cls = engines.get(engine)
