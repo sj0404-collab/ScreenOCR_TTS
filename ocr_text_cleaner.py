@@ -542,7 +542,7 @@ def filter_garbage_tokens(text: str) -> str:
 
     CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
     LATIN_RE = re.compile(r"[a-zA-Z]")
-    WHITELIST = set(".,!?;:-'\"()—–… \n")
+    WHITELIST = set(".,!?;:-'\"()—–…/ \n")
 
     lines = text.split("\n")
     result = []
@@ -614,6 +614,33 @@ def normalize_whitespace(text: str) -> str:
     # Убираем пробелы в начале/конце строк
     lines = [l.strip() for l in text.split("\n")]
     return "\n".join(lines)
+
+
+def normalize_numbers(text: str) -> str:
+    """Чистка чисел: 1.5000000 → 1.50, 100.00000 → 100.
+
+    Убирает хвостовые нули после десятичной точки (артефакт float-форматирования OCR).
+    Целые числа не трогает. Числа вида 1.00 → 1.
+    """
+    if not text:
+        return text
+
+    def _clean_number(m: re.Match) -> str:
+        s = m.group(0)
+        if '.' not in s and ',' not in s:
+            return s
+        # Заменяем запятую на точку для обработки, потом восстанавливаем
+        sep = ',' if ',' in s else '.'
+        integer, frac = s.split(sep, 1)
+        # Убираем хвостовые нули
+        frac = frac.rstrip('0')
+        if not frac:
+            return integer  # 1.00 → 1
+        return f"{integer}{sep}{frac}"
+
+    # Числа с десятичной точкой/запятой и хвостовыми нулями
+    text = re.sub(r'\b\d+[.,]\d*0+\b', _clean_number, text)
+    return text
 
 
 def cyrillic_fitness(text: str) -> float:
@@ -759,10 +786,13 @@ def full_clean_pipeline(text: str, engine_type: str = "tflite_cyrillic") -> str:
     # Шаг 6: Исправление known errors
     text = apply_known_corrections(text)
 
-    # Шаг 7: Финальная нормализация
+    # Шаг 7: Нормализация чисел (1.5000000 → 1.50)
+    text = normalize_numbers(text)
+
+    # Шаг 8: Финальная нормализация
     text = normalize_whitespace(text)
 
-    # Шаг 8: Проверка на CTC-рэмп
+    # Шаг 9: Проверка на CTC-рэмп
     if looks_like_dictionary_ramp(text):
         logger.warning(f"[Cleaner] Dictionary ramp detected, text may be garbage: {text[:80]}")
 

@@ -46,11 +46,20 @@ class OcrEngineDescriptor:
 
 # Реестр движков (порядок = приоритет по умолчанию)
 ENGINE_REGISTRY: Dict[str, OcrEngineDescriptor] = {
+    EngineType.GOOGLE_LENS.value: OcrEngineDescriptor(
+        id=EngineType.GOOGLE_LENS.value,
+        name="Google Lens (Glens OCR)",
+        engine_type=EngineType.GOOGLE_LENS,
+        priority=0,
+        requires_network=True,
+        description="Google Lens OCR через protobuf API (Glens OCR) — основной движок",
+        languages=["ru", "en", "ja", "ko", "zh", "de", "fr", "es"],
+    ),
     EngineType.TFLITE_CYRILLIC.value: OcrEngineDescriptor(
         id=EngineType.TFLITE_CYRILLIC.value,
         name="TFLite Cyrillic",
         engine_type=EngineType.TFLITE_CYRILLIC,
-        priority=0,
+        priority=10,
         requires_network=False,
         description="Локальный TFLite (PP-OCRv3+v5 + детектор v4), оптимизирован для кириллицы",
         languages=["ru", "en"],
@@ -59,20 +68,11 @@ ENGINE_REGISTRY: Dict[str, OcrEngineDescriptor] = {
         id=EngineType.EASYOCR.value,
         name="EasyOCR",
         engine_type=EngineType.EASYOCR,
-        priority=10,
+        priority=20,
         requires_network=False,
         requires_gpu=False,
         description="Локальный EasyOCR (многоязычный)",
         languages=["ru", "en", "ja", "ko", "zh"],
-    ),
-    EngineType.GOOGLE_LENS.value: OcrEngineDescriptor(
-        id=EngineType.GOOGLE_LENS.value,
-        name="Google Lens",
-        engine_type=EngineType.GOOGLE_LENS,
-        priority=20,
-        requires_network=True,
-        description="Онлайн OCR через Google Lens API",
-        languages=["ru", "en", "ja", "ko", "zh", "de", "fr", "es"],
     ),
 }
 
