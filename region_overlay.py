@@ -4,6 +4,7 @@
 Панели: inline в paintEvent, без отдельных QWidget.
 """
 import logging
+import time
 import ctypes
 import urllib.request
 from PyQt6.QtWidgets import (QWidget, QApplication, QHBoxLayout, QVBoxLayout,
@@ -122,6 +123,8 @@ class RegionOverlay(QWidget):
         # Привязка к окну приложения
         self._target_hwnd = None
         self._window_rect = None  # {x, y, width, height} of target window
+        self._diag_at = 0.0
+        self._warned_no_rect = False
         self._window_track_timer = QTimer(self)
         self._window_track_timer.timeout.connect(self._track_window_position)
         self._window_track_timer.start(200)
@@ -390,13 +393,18 @@ class RegionOverlay(QWidget):
             ww = rect.right - rect.left
             wh = rect.bottom - rect.top
             if ww <= 0 or wh <= 0:
+                # Окно свернуто/невидимо: оверлей оставляем на прежнем
+                # месте, но рисуть рамку нечем — сбрасываем прямоугольник,
+                # чтобы paintEvent не обрезал её по пустому клипу.
                 self._window_rect = None
+                self._warned_no_rect = True
                 return
             new_rect = {"x": wx, "y": wy, "width": ww, "height": wh}
             if self._window_rect != new_rect:
                 self._window_rect = new_rect
                 self.setGeometry(wx, wy, ww, wh)
                 self.setFixedSize(ww, wh)
+                self._warned_no_rect = False
                 self.update()
         except Exception:
             self._window_rect = None
@@ -788,9 +796,57 @@ class RegionOverlay(QWidget):
         except Exception:
             pass
 
+    def _diag_overlay(self):
+        """Разовая диагностика отрисовки: почему рамка может не быть видна.
+
+        Симптом: в полноэкранном режиме игры кнопка-шестерёнка видна, а
+        зелёная рамка — нет. Кнопка это отдельный QPushButton (рисуется
+        виджетом), рамка же рисуется вручную в paintEvent и может быть
+        срезана clip'ом по окну игры или погашена нулевой прозрачностью.
+        """
+        now = time.time()
+        if now - getattr(self, "_diag_at", 0.0) < 5.0:
+            return
+        self._diag_at = now
+        wr = self._window_rect
+        regs = self.regions or []
+        logger.info(
+            "[Overlay] регионов=%d window_rect=%s frame_opacity=%d "
+            "window_opacity=%.2f",
+            len(regs), wr, self._frame_opacity, self._window_opacity)
+        for r in regs:
+            x, y = r["x"], r["y"]
+            w, h = r.get("width", 0), r.get("height", 0)
+            if not w or not h:
+                logger.warning("[Overlay] регион %r имеет нулевой размер", r)
+                continue
+            if wr:
+                inside = (x >= wr["x"] and y >= wr["y"]
+                          and x + w <= wr["x"] + wr["width"]
+                          and y + h <= wr["y"] + wr["height"])
+                if not inside:
+                    logger.warning(
+                        "[Overlay] регион (%d,%d,%d,%d) ВНЕ окна игры %s — "
+                        "будет срезан clip'ом и не виден", x, y, w, h, wr)
+            else:
+                screen = QApplication.primaryScreen().geometry()
+                inside = (x >= 0 and y >= 0
+                          and x + w <= screen.width()
+                          and y + h <= screen.height())
+                if not inside:
+                    logger.warning(
+                        "[Overlay] регион (%d,%d,%d,%d) выходит за экран %dx%d",
+                        x, y, w, h, screen.width(), screen.height())
+            break   # одного региона достаточно для диагностики
+
     def paintEvent(self, event):
         if not self.regions:
+            self._diag_overlay()
             return
+        try:
+            self._diag_overlay()
+        except Exception as e:
+            logger.debug(f"[Overlay] diag failed: {e}")
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         alpha = int(self._frame_opacity * 2.55)
@@ -799,9 +855,23 @@ class RegionOverlay(QWidget):
         # Клиппинг к целевому окну
         if self._window_rect:
             wr = self._window_rect
-            # Координаты внутри overlay (overlay = окно)
+            # Раньше clip был строго по окну игры. При переходе в
+            # полноэкранный режим окно меняет размер, и рамка (координаты
+            # в экранных) уезжала за clip — шестерёнка была видна (это
+            # отдельный виджет), а зелёная рамка пропадала.
+            # Теперь clip = объединение окна игры и самих регионов.
+            # Координаты ВИДЖЕТА = экранные минус позиция окна игры.
             clip = QRect(0, 0, wr["width"], wr["height"])
-            p.setClipRect(clip)
+            for r in self.regions:
+                rx = r["x"] - wr["x"]
+                ry = r["y"] - wr["y"]
+                clip = clip.united(
+                    QRect(rx, ry, r.get("width", 0), r.get("height", 0)))
+            # QRect.clipRect() в PyQt6 НЕ существует (только intersected) —
+            # вызов падал с AttributeError прямо в paintEvent, из-за чего
+            # зелёная рамка не рисовалась вообще, а кнопка-шестерёнка
+            # (отдельный виджет) оставалась видна.
+            p.setClipRect(clip.intersected(self.rect()))
 
         self._layout_panels()
 
