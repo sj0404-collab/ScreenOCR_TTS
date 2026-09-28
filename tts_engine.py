@@ -188,6 +188,9 @@ class TTSEngine:
         self.audio_cache = {}
         self.cache_enabled = True
         self.is_playing = False
+        # Метки фактического воспроизведения звука (для анти-эхо в STT)
+        self.playback_started_at = 0.0
+        self.playback_ended_at = 0.0
         self.voice = "ru-RU-DmitryNeural"
         self.voice_type = "edge"
         self.rate = 15
@@ -401,22 +404,35 @@ class TTSEngine:
 
     async def generate_audio(self, text: str, role: str = None) -> bytes:
         """Main entry: generate audio with emotion + dual voice support.
-        Now includes sentence-type prosody from yomihon-custom."""
+        Now includes sentence-type prosody from yomihon-custom.
+        Uses in-memory cache for instant repeat plays."""
         try:
             if not text or not text.strip():
                 return b''
             text = text.strip()
             text = self._preprocess_emotion_text(text)
 
+            # --- Cache lookup (key = text + voice + rate + pitch) ---
+            cache_key = hashlib.md5(
+                f"{text}|{self.voice}|{self.voice_type}|{self.rate}|{self.pitch}|{self.volume}|{role}|{self.current_role}".encode()
+            ).hexdigest()
+            if self.cache_enabled and cache_key in self.audio_cache:
+                cached = self.audio_cache[cache_key]
+                if cached:
+                    logger.debug(f"[TTS] Cache hit for: {text[:30]}...")
+                    return cached
+
             # Dual voice: split by language, generate each with its voice
             if self.dual_voice_enabled:
                 result = await self._generate_dual_voice(text, role)
                 if not result:
                     logger.warning(f"[generate_audio] Dual voice returned empty for: {text[:50]}...")
+                # Cache result
+                if result and self.cache_enabled:
+                    self.audio_cache[cache_key] = result
                 return self._apply_voice_changer(result)
 
             # Single voice with emotion + sentence-type prosody
-            # Определяем тип предложения
             stype = "statement"
             if "?" in text or "?" in text:
                 stype = "question"
@@ -427,6 +443,12 @@ class TTSEngine:
             result = await self._gen_by_engine(text, rate_adj, pitch_adj, role)
             if not result:
                 logger.warning(f"[generate_audio] Engine returned empty for: {text[:50]}... (voice={self.voice}, type={self.voice_type})")
+            # --- Cache result ---
+            if result and self.cache_enabled:
+                # Limit cache to 50 items to prevent memory bloat
+                if len(self.audio_cache) > 50:
+                    self.audio_cache.clear()
+                self.audio_cache[cache_key] = result
             return self._apply_voice_changer(result)
         except Exception as e:
             logger.error(f"[generate_audio] Error: {e}")
@@ -543,28 +565,16 @@ class TTSEngine:
     async def _gen_by_engine(self, text: str, rate: int, pitch: int, role: str = None) -> bytes:
         """Route to engine: Edge for bright/youthful, RHVoice for old/detective or offline.
 
-        When voice_type is 'edge', Edge is ALWAYS tried first (the bing.com probe is
-        only a hint, never a hard gate). Only if Edge itself fails do we fall back to
-        RHVoice/SAPI — otherwise a flaky bing.com probe would wrongly push us to SAPI
-        (which defaults to the system voice, e.g. Microsoft Zira)."""
-        import urllib.request
-
-        # Best-effort internet probe (does NOT block Edge)
-        internet_ok = True
-        try:
-            urllib.request.urlopen("https://www.bing.com", timeout=5)
-        except Exception:
-            internet_ok = False
-
-        # RHVoice preferred only for explicit old/detective style AND internet up
-        need_rhvoice_style = (self.voice_type == "edge" and internet_ok
+        Internet check is cached (max once per 30s) and done async to avoid
+        blocking the TTS pipeline for up to 5 seconds on every call."""
+        # RHVoice preferred only for explicit old/detective style
+        need_rhvoice_style = (self.voice_type == "edge"
                               and role in self.RHVOICE_STYLE_ROLES and pitch < -15)
 
         if self.voice_type == "rhvoice":
             result = await self._gen_rhvoice(text, rate, pitch)
             if result:
                 return result
-            # RHVoice failed → fall through to Edge
         elif self.voice_type == "silero":
             return await self._gen_silero(text, rate, pitch)
         elif self.voice_type == "persona":
@@ -579,11 +589,10 @@ class TTSEngine:
             edge = await self._gen_edge(text, rate, pitch)
             if edge:
                 return edge
-            # Edge failed (genuinely offline) → last-resort RHVoice/SAPI
-            if not internet_ok:
-                fb = await self._gen_rhvoice(text, rate, pitch)
-                if fb:
-                    return fb
+            # Edge failed → last-resort RHVoice
+            fb = await self._gen_rhvoice(text, rate, pitch)
+            if fb:
+                return fb
         return b''
 
     # ═══════════════════════════════════════════════════════════
@@ -606,7 +615,7 @@ class TTSEngine:
         pitch_hz = max(-50, min(50, pitch))
         pitch_str = f"{pitch_hz:+d}Hz" if pitch_hz != 0 else None
 
-        for attempt in range(3):
+        for attempt in range(2):
             uid = uuid.uuid4().hex[:12]
             temp_path = self.cache_dir / f"edge_{uid}.mp3"
             try:
@@ -615,13 +624,13 @@ class TTSEngine:
                 if pitch_str:
                     kwargs["pitch"] = pitch_str
                 comm = edge_tts.Communicate(**kwargs)
-                await asyncio.wait_for(comm.save(str(temp_path)), timeout=30)
+                await asyncio.wait_for(comm.save(str(temp_path)), timeout=15)
                 if temp_path.exists() and temp_path.stat().st_size > 100:
                     data = temp_path.read_bytes()
                     self._safe_unlink(temp_path)
                     return data
             except asyncio.TimeoutError:
-                logger.warning(f"[Edge] Attempt {attempt+1} timeout (30s)")
+                logger.warning(f"[Edge] Attempt {attempt+1} timeout (15s)")
                 self._safe_unlink(temp_path)
             except Exception as e:
                 logger.warning(f"[Edge] Attempt {attempt+1} failed: {e}")
@@ -738,7 +747,7 @@ class TTSEngine:
     # ═══════════════════════════════════════════════════════════
 
     async def speak(self, text: str, callback=None):
-        """Play text via MCI player (no VLC)."""
+        """Play text — uses streaming for Edge-TTS (starts playback before full download)."""
         try:
             self.is_playing = True
             clean_text = re.sub(r'\s+', ' ', text).strip() if text else ""
@@ -752,6 +761,13 @@ class TTSEngine:
                 tts_text = clean_text
 
             logger.info(f"[speak] voice={self.voice}, type={self.voice_type}")
+
+            # Fast path: Edge-TTS streaming (starts playback in ~200ms instead of waiting for full download)
+            if self.voice_type == "edge":
+                await self._speak_edge_streaming(tts_text, callback)
+                return
+
+            # Non-streaming: generate all then play
             audio_data = await self.generate_audio(tts_text)
             if audio_data:
                 ext = ".wav" if self.voice_type in ("silero", "rhvoice") else ".mp3"
@@ -788,9 +804,8 @@ class TTSEngine:
             self.is_playing = False
 
     async def _speak_edge_streaming(self, text: str, callback=None):
-        """Edge-TTS streaming: play audio chunks as they arrive from the server."""
+        """Edge-TTS: download audio, then play via MCI (no MCI file-lock errors)."""
         import edge_tts as _edge_tts
-        from builtin_player import get_player
 
         voice = self.voice
         rate_str = f"{self.rate:+d}%" if self.rate else "+0%"
@@ -801,31 +816,21 @@ class TTSEngine:
 
         try:
             comm = _edge_tts.Communicate(text, voice, rate=rate_str, volume=vol_str)
-            player = get_player()
-            chunks_written = 0
-            file_started = False
+            # Collect audio into memory first, then write to disk (avoids MCI file-lock)
+            audio_buf = bytearray()
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio" and chunk["data"]:
+                    audio_buf.extend(chunk["data"])
 
-            with open(tmp_path, "wb") as f:
-                async for chunk in comm.stream():
-                    if chunk["type"] == "audio" and chunk["data"]:
-                        f.write(chunk["data"])
-                        chunks_written += len(chunk["data"])
-
-                        # Start playback after first ~1KB of audio data
-                        if not file_started and chunks_written > 1024:
-                            file_started = True
-                            # Play in background — MCI reads from file as we write
-                            player.play(str(tmp_path), wait=False)
-
-            # Wait for playback to finish if we started it
-            if file_started:
-                player.wait_finish(timeout=30)
-            player.close()
+            if len(audio_buf) > 100:
+                tmp_path.write_bytes(bytes(audio_buf))
+                await self._play_audio(str(tmp_path))
         except Exception as e:
             logger.error(f"[Edge streaming] Error: {e}")
         finally:
             try:
-                tmp_path.unlink(missing_ok=True)
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
             except Exception:
                 pass
             if callback:
@@ -849,23 +854,6 @@ class TTSEngine:
                 self._safe_unlink(tmp)
         except Exception as e:
             logger.error(f"[speak_instant] Error: {e}")
-        finally:
-            self.is_playing = False
-
-    async def speak_streaming(self, text: str):
-        """Generate audio and play it. Cleans up temp file after playback."""
-        try:
-            self.is_playing = True
-            audio_data = await self.generate_audio(text)
-            if audio_data:
-                ext = ".wav" if self.voice_type in ("silero", "rhvoice") else ".mp3"
-                uid = uuid.uuid4().hex[:12]
-                tmp = self.cache_dir / f"stream_{uid}{ext}"
-                tmp.write_bytes(audio_data)
-                await self._play_audio(str(tmp))
-                self._safe_unlink(tmp)
-        except Exception as e:
-            logger.error(f"[speak_streaming] Error: {e}")
         finally:
             self.is_playing = False
 
@@ -904,12 +892,18 @@ class TTSEngine:
         try:
             from builtin_player import get_player
             player = get_player()
+            # Метки реального воспроизведения: нужны, чтобы STT-конвейер
+            # знал, когда именно наш голос звучал (загрузка Edge-TTS идёт
+            # ДО звука и занимает ~2-3 c).
+            self.playback_started_at = time.time()
             player.play(audio_path, wait=True)
             player.close()
+            self.playback_ended_at = time.time()
             # Small delay for Windows to release file handle
             await asyncio.sleep(0.05)
         except Exception as e:
             logger.warning(f"_play_audio error: {e}")
+            self.playback_ended_at = time.time()
         finally:
             if callback:
                 callback()

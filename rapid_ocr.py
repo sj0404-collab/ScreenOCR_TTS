@@ -35,6 +35,43 @@ class RapidOCREngine:
             logger.error(f"[RapidOCR] Init failed: {e}")
             return False
 
+    def recognize_fast(self, img: Image.Image) -> Tuple[str, float]:
+        """Распознать УЖЕ ВЫРЕЗАННУЮ строку, БЕЗ детектора текста.
+
+        Детектор (PP-OCR DB) — самая тяжёлая часть: он масштабирует кадр до
+        ~736 px и прогоняет U-Net. Для субтитров он не нужен: полосу мы уже
+        нашли сами. Отключение det+cls даёт ускорение в разы, что и нужно
+        для чтения экрана в реальном времени.
+        """
+        if not self._initialized:
+            if not self.initialize():
+                return "", 0.0
+        try:
+            arr = np.array(img)
+            result = self._engine(arr, use_det=False, use_cls=False,
+                                  use_rec=True)
+            if result is None or not result:
+                return "", 0.0
+            # без детектора движок отдаёт готовые строки
+            out = result[0] if isinstance(result, tuple) else result
+            texts, confs = [], []
+            for item in (out or []):
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    texts.append(str(item[0]))
+                    try:
+                        confs.append(float(item[1]))
+                    except Exception:
+                        pass
+                elif isinstance(item, str):
+                    texts.append(item)
+            if not texts:
+                return "", 0.0
+            conf = (sum(confs) / len(confs)) if confs else 0.0
+            return " ".join(t.strip() for t in texts if t.strip()), conf
+        except Exception as e:
+            logger.debug(f"[RapidOCR] recognize_fast failed: {e}")
+            return "", 0.0
+
     def recognize(self, img: Image.Image) -> Tuple[str, float]:
         """Recognize text from PIL Image. Returns (text, confidence)."""
         if not self._initialized:
