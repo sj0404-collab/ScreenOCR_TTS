@@ -6,6 +6,7 @@ Glens OCR — Google Lens OCR через protobuf API.
 """
 import io
 import logging
+import os
 import random
 import struct
 import requests
@@ -119,7 +120,10 @@ class GlensOCR:
     """Google Lens OCR через protobuf API."""
 
     ENDPOINT = "https://lensfrontend-pa.googleapis.com/v1/crupload"
-    API_KEY = "AIzaSyDr2UxVnv_U85AbhhY8XSHSIavUW0DC-sY"
+    # Ключ НЕ в коде: берётся из настроек (ocr.online_api_key) или из
+    # переменной окружения. Раньше здесь был захардкоженный ключ — он уезжал
+    # в репозиторий вместе с исходниками.
+    API_KEY = os.environ.get("GOOGLE_LENS_API_KEY", "")
     USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
     CLIENT_LANGUAGE = "ja"
     CLIENT_REGION = "Asia/Tokyo"

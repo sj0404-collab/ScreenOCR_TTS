@@ -14,6 +14,7 @@ OCR Engines — реестр движков и пресеты для типа к
   - MANHWA — манхва/вебтун (вертикальное чтение)
 """
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -29,6 +30,8 @@ class EngineType(str, Enum):
     TFLITE_CYRILLIC = "tflite_cyrillic"
     EASYOCR = "easyocr"
     GOOGLE_LENS = "google_lens"
+    RAPIDOCR = "rapidocr"
+    ZEN = "zen"
 
 
 @dataclass
@@ -74,7 +77,81 @@ ENGINE_REGISTRY: Dict[str, OcrEngineDescriptor] = {
         description="Локальный EasyOCR (многоязычный)",
         languages=["ru", "en", "ja", "ko", "zh"],
     ),
+    EngineType.RAPIDOCR.value: OcrEngineDescriptor(
+        id=EngineType.RAPIDOCR.value,
+        name="RapidOCR (быстрый)",
+        engine_type=EngineType.RAPIDOCR,
+        priority=5,
+        requires_network=False,
+        description="Локальный RapidOCR на ONNX — самый быстрый: ~0.3 c на кадр. "
+                    "Хорошо для латиницы",
+        languages=["ru", "en"],
+    ),
+    EngineType.ZEN.value: OcrEngineDescriptor(
+        id=EngineType.ZEN.value,
+        name="Zen (space-bunny-free)",
+        engine_type=EngineType.ZEN,
+        priority=8,
+        requires_network=True,
+        description="Облачный OCR через Zen: читает ЛЮБЫЕ языки включая "
+                    "иероглифы, ~3-4 c на кадр, ключ не нужен",
+        languages=["ru", "en", "ja", "ko", "zh", "any"],
+    ),
 }
+
+
+def list_available_engines() -> List[OcrEngineDescriptor]:
+    """Список движков, которые РЕАЛЬНО установлены в этой системе.
+
+    В списке настроек не должно быть движков, которые падают при выборе:
+    раньше там стояли Tesseract (его нет в движках вообще) и EasyOCR
+    (пакет не установлен) — то есть выбор заведомо нерабочих вариантов.
+    """
+    out = []
+    for desc in sorted(ENGINE_REGISTRY.values(), key=lambda d: d.priority):
+        if not _engine_installed(desc.engine_type):
+            logger.debug(f"[Engines] {desc.id} пропущен: не установлен")
+            continue
+        out.append(desc)
+    return out
+
+
+def _engine_installed(engine_type: "EngineType") -> bool:
+    """Есть ли зависимости движка в этой системе.
+
+    Проверка идёт через find_spec, а НЕ через import: импорт
+    tensorflow/tflite_runtime занимает ~15 c и тормозит запуск GUI.
+    """
+    import importlib.util
+
+    def have(mod):
+        try:
+            return importlib.util.find_spec(mod) is not None
+        except Exception:
+            return False
+
+    if engine_type == EngineType.RAPIDOCR:
+        return have("rapidocr_onnxruntime")
+    if engine_type == EngineType.EASYOCR:
+        return have("easyocr")
+    if engine_type == EngineType.TFLITE_CYRILLIC:
+        # движок умеет работать и на tensorflow.lite, и на tflite_runtime
+        if not (have("tensorflow") or have("tflite_runtime")):
+            return False
+        # плюс сами модели должны быть на месте (models/cyrillic_ocr/)
+        models = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "models", "cyrillic_ocr")
+        if not os.path.isdir(models):
+            models = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "models")
+        return (os.path.exists(os.path.join(models, "cyrillic_detector.tflite"))
+                and os.path.exists(os.path.join(models,
+                                                "cyrillic_recognizer_v3.tflite")))
+    if engine_type in (EngineType.GOOGLE_LENS, EngineType.ZEN):
+        # это наш собственный код, он всегда на месте
+        return os.path.exists(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "online_ocr.py"))
+    return True
 
 
 def get_engine_descriptor(engine_id: str) -> Optional[OcrEngineDescriptor]:
@@ -318,8 +395,54 @@ def create_engine(engine_id: str, settings: dict) -> Any:
         return _create_easyocr(settings)
     elif descriptor.engine_type == EngineType.GOOGLE_LENS:
         return _create_google_lens(settings)
+    elif descriptor.engine_type == EngineType.RAPIDOCR:
+        return _create_rapidocr(settings)
+    elif descriptor.engine_type == EngineType.ZEN:
+        return _create_zen(settings)
     else:
         logger.error(f"[Engines] No factory for engine: {engine_id}")
+        return None
+
+
+def _create_rapidocr(settings: dict):
+    """Создать RapidOCR (локальный, самый быстрый).
+
+    Движок работает в «умном» режиме: на узкой полосе идёт быстрый проход
+    без детектора (~0.3 c), детектор подключается только если результат
+    плохой. Число потоков ограничено, чтобы игра не теряла FPS.
+    """
+    try:
+        from rapid_ocr import RapidOCREngine
+        engine = RapidOCREngine(
+            threads=settings.get("ocr.ocr_threads", 2),
+            limit_side_len=settings.get("ocr.det_limit_side", 480),
+            use_cls=False,
+        )
+        # recognize_auto: быстрый проход с добивкой детектором при необходимости
+        engine.recognize = engine.recognize_auto
+        logger.info("[Engines] RapidOCR initialized (быстрый режим)")
+        return engine
+    except ImportError:
+        logger.error("[Engines] rapidocr_onnxruntime not installed")
+        return None
+    except Exception as e:
+        logger.error(f"[Engines] RapidOCR error: {e}")
+        return None
+
+
+def _create_zen(settings: dict):
+    """Создать Zen OCR (облачный, любые языки)."""
+    try:
+        from online_ocr import ZenOCR
+        engine = ZenOCR(model=settings.get("ocr.zen_model", ""))
+        logger.info(f"[Engines] Zen OCR initialized "
+                    f"(model={engine.model or engine.DEFAULT_MODEL})")
+        return engine
+    except ImportError:
+        logger.error("[Engines] online_ocr.py not found")
+        return None
+    except Exception as e:
+        logger.error(f"[Engines] Zen OCR error: {e}")
         return None
 
 
