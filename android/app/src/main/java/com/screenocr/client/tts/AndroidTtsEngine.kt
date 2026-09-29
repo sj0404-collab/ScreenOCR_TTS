@@ -60,13 +60,10 @@ class AndroidTtsEngine(
             listener.onFailed("Нет текста для озвучки")
             return
         }
-        val available = voices()
+        val available = tts?.voices.orEmpty()
         val selected = TtsVoiceSelector.select(available.map { it.toCandidate() }, language)
-        val voiceApplied = selected
-            ?.let { voice -> available.firstOrNull { it.name == voice.name } }
-            ?.let { engine.setVoice(it) == TextToSpeech.SUCCESS }
-            ?: false
-        if (!voiceApplied) {
+        val chosen = selected?.let { pick -> available.firstOrNull { it.name == pick.name } }
+        if (chosen == null || engine.setVoice(chosen) != TextToSpeech.SUCCESS) {
             val tag = TtsVoiceSelector.localeTagFor(language)
             if (engine.setLanguage(Locale.forLanguageTag(tag)) != TextToSpeech.SUCCESS) {
                 listener.onFailed("Синтезатор не поддерживает язык $tag")
@@ -91,8 +88,6 @@ class AndroidTtsEngine(
         tts?.shutdown()
         tts = null
     }
-
-    private fun voices(): List<TtsVoice> = tts?.voices.orEmpty().map { it.toCandidate() }
 
     private fun Voice.toCandidate() = TtsVoice(
         name = name,
