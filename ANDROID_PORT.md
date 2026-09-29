@@ -1,7 +1,8 @@
 # Порт нативного клиента на Android
 
-Статус: этапы 1 и 2 сделаны. Ветка `feat/android-native`, коммиты `ebda219` (этап 1),
-этап 2 — текущий.
+Статус: этапы 1, 2 и 3 сделаны. Ветка `feat/android-native`, коммиты `ebda219` (этап 1),
+`ad8a09d` (этап 2), `108d3ad` (этап 3), этап 4 — текущий.
+Сборка и тесты идут в CI (`.github/workflows/build-apk.yml`), локальный Gradle не используется.
 
 ## Зачем
 
@@ -130,6 +131,21 @@ Python-реализации по 1460 строкам и требует поси�
 Под Android-это OLA-спецэффект отсутствует, а `espeak-ng` для английского вообще вызывается
 как subprocess по жёстко зашитому пути `C:\Program Files\eSpeak NG\espeak-ng.exe`
 (`piper_onnx_tts.py:14`) — русский путь обходится без него, английский нет.
+
+#### Что реально сделано на этапе 3
+
+- `MainActivity` больше не WebView-обёртка над pro-server, а Compose-экран
+  (`ui/TranslatorScreen.kt`); pro-server больше не входит в путь приложения.
+- `TranslationPipeline` склеивает `TextCleaner` + `LanguageDetector` + `OfflineTranslator`:
+  русский исходник озвучивается как есть, английский переводится офлайн.
+- `SpeechEngine` + `AndroidTtsEngine`: системный TTS, выбор голоса по языку с приоритетом
+  локальных, `SpeechText` режет текст на куски по 300 символов по границам предложений.
+- В манифест добавлен `<queries>` для `android.intent.action.TTS_SERVICE` — без него на
+  Android 11+ `TextToSpeech` не видит ни одного движка и приложение молчит.
+- Голос в Android идентифицируется именем: `Voice.getId()` в публичном SDK отсутствует,
+  `setVoice()` принимает сам объект. Констант `ERROR_CLIENT`/`ERROR_NOT_SUPPORTED` тоже нет —
+  коды ошибок обрабатываются по фактическим `ERROR_*`.
+- Тесты: 90 JVM-тестов, все зелёные в CI, APK собирается и выкладывается артефактом.
 
 ### Этап 4 — OCR
 
