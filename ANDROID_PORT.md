@@ -1,0 +1,133 @@
+# Порт нативного клиента на Android
+
+Статус: план. Ветка `feat/android-native`.
+
+## Зачем
+
+Python-версия работает только на Windows: захват экрана (`mss` + `ctypes.windll.user32`,
+перечисление окон по HWND), воспроизведение (`mciSendStringA` через `ctypes.windll.winmm`),
+SAPI5 через PowerShell, `pynput`/`keyboard` для глобальных хоткеев. На Android переносима
+только логика текста — всё остальное нужно писать заново на платформенных API.
+
+## Правило работы
+
+Коммит после каждой подсистемы, не «всё в конце». Предыдущая попытка порта потеряла
+около двух часов работы семи параллельных агентов: код существовал только в рабочем дереве.
+План лежит в репозитории, история коммитов — в репозитории.
+
+Проверка на каждом шаге: `./gradlew assembleDebug` плюс `./gradlew testDebugUnitTest`.
+Модуль `android/` собирается (baseline проверен, AGP 8.2.2 / Gradle 8.6 / JDK 17,
+compileSdk 34, minSdk 23).
+
+## Что уже есть в android/
+
+Один файл `MainActivity.kt` (WebView-обёртка над pro-сервером, 6 КБ). Compose, TFLite
+runtime, onnxruntime в зависимостях нет.
+
+## Порядок
+
+### Этап 1 — текстовое ядро (чистый Kotlin, без ассетов и сети)
+
+Переносится один-в-один, компилируется и покрывается JVM-тестами:
+
+| Модуль | Источник | Заметки |
+|---|---|---|
+| `TextCleaner` | `ocr_text_cleaner.py` | без словарных функций: `normalize_whitespace`, `fix_lookalikes_per_word`, `join_line_hyphens`, `filter_garbage_tokens`, `apply_known_corrections`, `normalize_numbers` |
+| `SpeechDecider` | `speech_decider.py` | взвешенный скоринг, 12 признаков, пороги `speak_at=0.55` / `refine_at=0.30` |
+| `Similarity` | `scanner.py:131` | longest common substring / max(len), DP |
+| `LanguageDetector` | `live_scanner.py:664`, `tts_engine.py:378` | доля кириллицы > 0.3 → `ru`, иначе `en` |
+
+Словарные функции (`restore_known_words` с DP-ресегментацией, `correct_visual_confusions`)
+переносятся во этапе 2 вместе с ассетом `eng_rus_dict.json` (5.02 MiB).
+
+Ожидаемая польза, а не только новизна: сейчас таблицы омоглифов существуют в двух местах
+(`ocr_text_cleaner.py:26` и `ocr_wrapper.py:105`), а цепочка очистки собрана заново в трёх
+(`ocr_wrapper.py:1088`, `ocr_wrapper.py:1108`, `gui_compact.py:1437`). Одна реализация
+убирает расхождение.
+
+### Этап 2 — офлайн-переводчик
+
+Источник: `offline_dict.py` (`OfflineTranslator`), `en_ru_dict.py`, `phrases_dict.py`,
+`words_extra.py`, `contractions.py`.
+
+Ассеты уже в репозитории, копируются в assets на этапе сборки, дублировать в git не нужно:
+
+| Файл | Размер | Записей |
+|---|---|---|
+| `en_rus_full.json` | 2.19 MiB | 68 155 |
+| `cities_dict.json` | 0.014 MiB | 510 |
+| `game_names.json` | 0.017 MiB | 686 |
+
+Плюс словари-литералы в Kotlin: `EXTRA_WORDS` 512, `PHRASES` 258, `CONTRACTIONS` 47
+(генерируются из Python скриптом, чтобы не расходились).
+
+Обязательные отличия от Python, иначе вывод разойдётся:
+
+- `\b` и `\w` в `java.util.regex` не работают по Unicode. Нужны `Pattern.UNICODE_CHARACTER_CLASS`
+  и `\p{L}\p{N}` вместо `\w`, иначе каждый кириллический токен схлопнется в пустую строку и
+  будет молча выброшен (`offline_dict.py:66`, `offline_dict.py:73`).
+- `String.toLowerCase(Locale.ROOT)`, не `Locale.getDefault()` — иначе турецкая точка над i.
+- Фразовый проход в Python делает 1447 `re.search` + `re.sub` на каждый вызов
+  (`offline_dict.py:63-70`). Заменяется на бор по триграммам (Aho-Corasick) с выбором
+  самого длинного совпадения, как в `JaRuTranslator` (`offline_dict.py:209`) — единственный
+  уже эффективный матчер в репозитории.
+- Пустые значения (`"of": ""` в `words_extra.py:208`) порождают двойные пробелы — при
+  переносе это чинится, а не воспроизводится.
+- `learned_dict.json` и `en_ru_custom.json` пишутся в рантайме → private storage приложения,
+  не `assets/`.
+
+Онлайн-бэкенды (`translator.py`: Zen, Google gtx, DeepL jsonrpc) **не переносятся** — это
+неофициальные скрейп-эндпоинты, судьба которых не зависит от нас.
+
+### Этап 3 — озвучка и первый сквозной путь
+
+Ключевой факт: Piper удалён из движка в v2.4 (`requirements.txt:2`), в `tts_engine.py` нет
+`_gen_piper`, папки `voices/` и моделей в репозитории нет, скрипта скачивания тоже нет.
+Поэтому Piper-путь начинать не с чего — ассеты пришлось бы создавать с нуля.
+
+Сквозной путь первого этапа: **текст → очистка → офлайн-перевод → системный TTS Android →
+воспроизведение**. Модели не нужны, `android.speech.tts.TextToSpeech` доступен на устройстве.
+Движок скрыт за интерфейсом `SpeechEngine`, поэтому Piper/onnxruntime позже подключается
+заменой реализации.
+
+Замеры Piper, когда дойдёт: синтез целой фразы одним проходом, стриминга нет
+(`piper_onnx_tts.py:99` пишет WAV целиком), первая задержка = размер модели + полный forward.
+Под Android-это OLA-спецэффект отсутствует, а `espeak-ng` для английского вообще вызывается
+как subprocess по жёстко зашитому пути `C:\Program Files\eSpeak NG\espeak-ng.exe`
+(`piper_onnx_tts.py:14`) — русский путь обходится без него, английский нет.
+
+### Этап 4 — OCR
+
+Модели в репозитории есть: `models/cyrillic_ocr/` (`cyrillic_detector.tflite`,
+`cyrillic_recognizer_v3.tflite`, `cyrillic_recognizer_v5.tflite`). Нужен TFLite runtime.
+
+Переносится `numpy_tflite.py` (чистый Python, переносим один-в-один) и предобработка из
+`image_preprocessor.py`. Детектор отдаёт боксы, порядок чтения собирается как в
+`ocr_wrapper.py:1117` (группировка по Y-центру, `y_tol = max(8.0, median_h * 0.6)`).
+
+### Этап 5 — захват экрана и оверлей
+
+Самая рискованная часть, делается последней: `MediaProjection` на Android требует явного
+согласия пользователя, а оверлей поверх чужого приложения — `TYPE_APPLICATION_OVERLAY`
+с отдельным разрешением. До этапа 3 не начинать.
+
+## Чего не переносим
+
+- `rhvoice`/SAPI5, MCI, `pynput`/`keyboard` — Windows-only, на Android аналога нет.
+- `voice_changer.py` — `scipy.signal.resample` и biquad-фильтры без аналога; наивное
+  изменение питча без PSOLA сдвинет форманты (`voice_changer.py:123`), переносить этот дефект
+  не нужно.
+- `speech_decider` из STT-пути как сейчас: он мёртвый код, `VoiceTranslator` хранит экземпляр
+  (`voice_translator.py:47`) и ни разу не вызывает `.decide()`.
+- `translator.py` для онлайн-провайдеров, см. этап 2.
+
+## Известные расхождения, которые не чиним при переносе
+
+Обе версии ведут себя одинаково криво в местах, помеченных в исходниках; при переносе
+воспроизводим поведение, а не дефект, и чиним отдельной задачей:
+
+- `join_line_hyphens` применяет один и тот же regex дважды (`ocr_text_cleaner.py:235` и `:237`).
+- `en_ru_dict.translate_text` недостижим для многословных ключей: текст режется по пробелам
+  до пословного поиска (`en_ru_dict.py:299`).
+- `test_piper_integration.py:100` и `test_voice_demo.py:103` проверяют API, удалённый в v2.4,
+  и не могут проходить против текущего `tts_engine.py`.
