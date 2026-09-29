@@ -39,7 +39,7 @@ class OcrImage(val width: Int, val height: Int, val pixels: Array<IntArray>) {
         val r = max(l + 1, right.coerceIn(l, width))
         val t = top.coerceIn(0, height)
         val b = max(t + 1, bottom.coerceIn(t, height))
-        val out = Array(b - t) { Array(r - l) { 0 } }
+        val out = Array(b - t) { IntArray(r - l) }
         for (y in t until b) {
             val src = pixels[y]
             val dst = out[y - t]

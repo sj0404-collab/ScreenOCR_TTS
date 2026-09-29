@@ -298,20 +298,20 @@ object WordSplitter {
         if (crop.width < SPLIT_MIN_WIDTH_PX) return listOf(crop)
         val runs = inkRuns(crop.inkProjection()) ?: return listOf(crop)
         if (runs.size < 2) return listOf(crop)
-        val gaps = runs.indices.dropLast(1).map { runs[it + 1].first - runs[it].second - 1 }
+        val gaps = runs.indices.dropLast(1).map { runs[it + 1][0] - runs[it][1] - 1 }
         val threshold = max(MIN_WORD_GAP_PX, (medianGap(gaps) * WORD_GAP_FACTOR).roundToInt())
         val groups = mutableListOf<IntArray>()
-        var groupStart = runs.first().first
+        var groupStart = runs.first()[0]
         var splits = 0
         for ((i, gap) in gaps.withIndex()) {
             if (gap >= threshold) {
                 groups.add(intArrayOf(groupStart, runs[i][1]))
-                groupStart = runs[i + 1].first
+                groupStart = runs[i + 1][0]
                 splits++
             }
         }
         if (splits == 0) return listOf(crop)
-        groups.add(intArrayOf(groupStart, runs.last().second))
+        groups.add(intArrayOf(groupStart, runs.last()[1]))
         if (groups.size <= 1) return listOf(crop)
 
         // Щедрые поля: распознаватель теряет крайние глифы без левого контекста.
