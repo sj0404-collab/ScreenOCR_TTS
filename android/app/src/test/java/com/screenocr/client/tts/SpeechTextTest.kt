@@ -25,11 +25,12 @@ class SpeechTextTest {
     @Test
     fun `long text splits on sentence boundaries`() {
         val sentence = "Это предложение ровно такой длины, чтобы проверить разбиение. "
-        val text = sentence.repeat(4)
+        val text = sentence.repeat(10)
         val chunks = SpeechText.chunks(text)
         assertTrue("ожидалось больше одного куска, получено ${chunks.size}", chunks.size > 1)
         assertTrue(chunks.all { it.length <= SpeechText.MAX_CHUNK })
         assertTrue(chunks.none { it.isEmpty() })
+        assertTrue(chunks.all { it.endsWith("разбиение.") })
     }
 
     @Test

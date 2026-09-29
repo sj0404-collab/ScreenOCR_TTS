@@ -30,8 +30,8 @@ class TtsVoiceSelectorTest {
     }
 
     @Test
-    fun `english selection is independent of russian voices`() {
-        assertEquals("en-us", TtsVoiceSelector.select(voices, "en")?.name)
+    fun `english selection ignores russian voices and breaks ties by name`() {
+        assertEquals("en-gb", TtsVoiceSelector.select(voices, "en")?.name)
     }
 
     @Test
