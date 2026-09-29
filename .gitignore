@@ -43,3 +43,10 @@ models/models--*/
 # 3rd-party driver pack (download from vb-audio.com if needed)
 VBCABLE_Driver_Pack45/
 VBCABLE_Driver_Pack45.zip
+
+# Android build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
