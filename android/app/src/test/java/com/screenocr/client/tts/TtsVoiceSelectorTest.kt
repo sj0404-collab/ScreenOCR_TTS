@@ -2,18 +2,17 @@ package com.screenocr.client.tts
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TtsVoiceSelectorTest {
 
     private val voices = listOf(
-        TtsVoice("ru-net", "ru-RU", "Russian (network)", requiresNetwork = true),
-        TtsVoice("ru-local", "ru-RU", "Russian local", requiresNetwork = false),
-        TtsVoice("ru-old", "ru", "Russian generic", requiresNetwork = false),
-        TtsVoice("en-us", "en-US", "English US", requiresNetwork = false),
-        TtsVoice("en-gb", "en-GB", "English GB", requiresNetwork = false),
-        TtsVoice("de-de", "de-DE", "German", requiresNetwork = false),
+        TtsVoice("ru-net", "ru-RU", requiresNetwork = true),
+        TtsVoice("ru-local", "ru-RU", requiresNetwork = false),
+        TtsVoice("ru-old", "ru", requiresNetwork = false),
+        TtsVoice("en-us", "en-US", requiresNetwork = false),
+        TtsVoice("en-gb", "en-GB", requiresNetwork = false),
+        TtsVoice("de-de", "de-DE", requiresNetwork = false),
     )
 
     @Test
@@ -23,7 +22,11 @@ class TtsVoiceSelectorTest {
 
     @Test
     fun `regional tag wins over bare language`() {
-        assertEquals("ru-local", TtsVoiceSelector.select(listOf(TtsVoice("ru-old", "ru", "generic", false), TtsVoice("ru-local", "ru-RU", "regional", false)), "ru")?.name)
+        val candidates = listOf(
+            TtsVoice("ru-old", "ru", requiresNetwork = false),
+            TtsVoice("ru-local", "ru-RU", requiresNetwork = false),
+        )
+        assertEquals("ru-local", TtsVoiceSelector.select(candidates, "ru")?.name)
     }
 
     @Test
@@ -43,8 +46,13 @@ class TtsVoiceSelectorTest {
 
     @Test
     fun `network only language still resolves`() {
-        val onlyNetwork = listOf(TtsVoice("ru-net", "ru-RU", "Russian net", requiresNetwork = true))
+        val onlyNetwork = listOf(TtsVoice("ru-net", "ru-RU", requiresNetwork = true))
         assertEquals("ru-net", TtsVoiceSelector.select(onlyNetwork, "ru")?.name)
+    }
+
+    @Test
+    fun `empty voice list yields null`() {
+        assertNull(TtsVoiceSelector.select(emptyList(), "ru"))
     }
 
     @Test
