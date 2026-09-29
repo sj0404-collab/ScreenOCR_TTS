@@ -1,0 +1,1463 @@
+# СГЕНЕРИРОВАНО: python3 gen_android_dicts.py
+# Колонки: english<TAB>expected_russian<TAB>mode<TAB>hasUntranslated
+# mode=same — Kotlin обязан совпасть с Python; fixed — Python даёт двойной пробел
+Hello world	привет мир	same	false
+How are you?	как дела	same	false
+Thank you!	спасибо	same	false
+Press the button	пресса ЗАВЕРТКА	same	false
+Please open the door and wait here	пожалуйста открывать ДВЕРИ и подожди здесь	same	false
+the quick brown fox	БЕГЛО ВОРОНИТЬ ЛИСА	same	false
+I saw a big fish in the sea	я видевший большой ВЫТАСКИВАТЬ в море	same	false
+one two three four five six	ОДНА ДВА ТРИ ЧЕТВЕРКА ПЯТЕРКА ШЕСТЕРКА	same	false
+3 apples, 12 oranges	3 ЯБЛОКА 12 АПЕЛЬСИНЫ	same	false
+HELLO WORLD	привет мир	same	false
+New York City	Нью-Йорк город	same	false
+  leading and trailing  	ВЕДУЩИЙ и ВОЛОЧЕНИЕ	same	false
+punctuation, everywhere!	ПУНКТУАЦИЯ ВЕЗДЕ	same	false
+...ellipsis...	ЭЛЛИПС	same	false
+hyphen-ated-word	hyphenatedword	same	true
+under_score and dash-separated	under_score и dashseparated	same	true
+I don't understand	я делать не понимать	same	false
+It's raining, isn't it?	это есть НАПРАВЛЯТЬСЯ является не ЕЙ	same	false
+Let's go now	позволять нам идти сейчас	same	false
+you're welcome	ты есть ГОСТЕПРИИМСТВО	same	false
+i'm fine	я есть ВЕЛИКОЛЕПЕН	same	false
+of the box	ВТУЛКА	fixed	true
+a an the of		same	true
+The End	конец	same	false
+SUPER MARIO	ОТЛИЧЕН mario	same	true
+the legend of zelda	ПОДПИСЬ zelda	fixed	true
+final fantasy	ЗАВЕРШАЮЩИЙ ВООБРАЖЕНИЕ	same	false
+		same	true
+ 		same	true
+!!!		same	true
+12345	12345	same	true
+emoji only 😀 text	emoji только ТЕКСТ	same	true
+Zelda	zelda	same	true
+no such word at all here	нет ТАКОВ СЛОВО в все здесь	same	false
+hello	привет	same	false
+goodbye	до свидания	same	false
+bye	пока	same	false
+see you	увидимся	same	false
+see you later	увидимся позже	same	false
+good morning	доброе утро	same	false
+good afternoon	добрый день	same	false
+good evening	добрый вечер	same	false
+good night	спокойной ночи	same	false
+how are you	как дела	same	false
+how are you doing	как дела	same	false
+thank you	спасибо	same	false
+thanks	спасибо	same	false
+please	пожалуйста	same	false
+excuse me	извините	same	false
+i'm sorry	я есть прости	same	false
+sorry	прости	same	false
+yes	да	same	false
+no	нет	same	false
+maybe	может быть	same	false
+i don't understand	я делать не понимать	same	false
+i understand	я понимаю	same	false
+help me	помоги мне	same	false
+help me please	пожалуйста помоги мне	same	false
+follow me	следуй за мной	same	false
+follow me right now	следуй за мной прямо сейчас	same	false
+wait	подожди	same	false
+wait here	подожди здесь	same	false
+come here	иди сюда	same	false
+go away	уходи	same	false
+get out	выходи	same	false
+come back	вернись	same	false
+come back quickly	вернись быстро	same	false
+hurry	поспешить	same	false
+danger	опасность	same	false
+be careful	будь осторожен	same	false
+watch out	осторожно	same	false
+look out	осторожно	same	false
+i need help	мне нужна помощь	same	false
+i need you	ты мне нужен	same	false
+we need to go	нам нужно идти	same	false
+we must go	мы должны уйти	same	false
+we should go	нам стоит уйти	same	false
+let's go	позволять нам идти	same	false
+let's go now	позволять нам идти сейчас	same	false
+we have to leave	нам нужно уйти	same	false
+where is	где находится	same	false
+where are you	где ты	same	false
+what is	что это	same	false
+what happened	что произошло	same	false
+who are you	кто ты	same	false
+who is that	кто это	same	false
+why	почему	same	false
+when	когда	same	false
+how	как	same	false
+give me	дай мне	same	false
+give me the key	дай мне ключ	same	false
+i want	я хочу	same	false
+i need	мне нужно	same	false
+i have	у меня есть	same	false
+i don't have	я делать не иметь	same	false
+i am	я есть	same	false
+you are	ты есть	same	false
+he is	он есть	same	false
+she is	она есть	same	false
+it is	это есть	same	false
+we are	мы есть	same	false
+they are	они есть	same	false
+i was	я был	same	false
+you were	ты был	same	false
+he was	он был	same	false
+she was	она былa	same	false
+we were	мы были	same	false
+they were	они были	same	false
+attack	атаковать	same	false
+attack the enemy	атакуй врага	same	false
+defend	защищать	same	false
+defend yourself	защищайся	same	false
+fight	сражаться	same	false
+run	беги	same	false
+hide	спрячься	same	false
+stay here	останься здесь	same	false
+don't move	делать не двигать	same	false
+come with me	иди со мной	same	false
+go with him	иди с ним	same	false
+once upon a time	давным-давно	same	true
+long long ago	очень давно	same	false
+the end	конец	same	false
+the beginning	начало	same	false
+good	хорошо	same	false
+bad	плохо	same	false
+great	отлично	same	false
+fantastic	фантастика	same	false
+wonderful	замечательно	same	false
+terrible	ужасно	same	false
+awful	кошмар	same	false
+beautiful	красивый	same	false
+ugly	уродливый	same	false
+strong	сильный	same	false
+weak	слабый	same	false
+fast	быстрый	same	false
+slow	медленный	same	false
+big	большой	same	false
+small	маленький	same	false
+old	старый	same	false
+new	новый	same	false
+young	молодой	same	false
+tall	высокий	same	false
+short	низкий	same	false
+friend	друг	same	false
+enemy	враг	same	false
+hero	герой	same	false
+monster	монстр	same	false
+king	король	same	false
+queen	королева	same	false
+prince	принц	same	false
+princess	принцесса	same	false
+knight	рыцарь	same	false
+wizard	волшебник	same	false
+mage	маг	same	false
+warrior	воин	same	false
+thief	вор	same	false
+assassin	убийца	same	false
+archer	стрелок	same	false
+healer	целитель	same	false
+sword	меч	same	false
+shield	щит	same	false
+armor	броня	same	false
+weapon	оружие	same	false
+magic	магия	same	false
+spell	заклинание	same	false
+potion	зелье	same	false
+health	здоровье	same	false
+mana	мана	same	false
+power	власть	same	false
+level	уровень	same	false
+quest	квест	same	false
+mission	миссия	same	false
+battle	битва	same	false
+war	война	same	false
+peace	мир	same	false
+death	смерть	same	false
+life	жизнь	same	false
+soul	душа	same	false
+light	светлый	same	false
+dark	тёмный	same	false
+fire	огонь	same	false
+water	вода	same	false
+earth	земля	same	false
+wind	ветер	same	false
+sky	небо	same	false
+star	звезда	same	false
+moon	луна	same	false
+sun	солнце	same	false
+night	ночь	same	false
+day	день	same	false
+morning	утро	same	false
+evening	вечер	same	false
+world	мир	same	false
+land	земля	same	false
+forest	лес	same	false
+mountain	гора	same	false
+river	река	same	false
+sea	море	same	false
+ocean	океан	same	false
+island	остров	same	false
+city	город	same	false
+town	деревня	same	false
+castle	замок	same	false
+tower	башня	same	false
+dungeon	подземелье	same	false
+village	деревня	same	false
+temple	храм	same	false
+palace	дворец	same	false
+blood	кровь	same	false
+wound	рана	same	false
+pain	боль	same	false
+fear	страх	same	false
+courage	мужество	same	false
+hope	надежда	same	false
+faith	вера	same	false
+love	любовь	same	false
+hatred	ненависть	same	false
+anger	гнев	same	false
+joy	радость	same	false
+sadness	грусть	same	false
+truth	правда	same	false
+lie	ложь	same	false
+secret	секрет	same	false
+promise	обещание	same	false
+oath	клятва	same	false
+destiny	судьба	same	false
+fate	судьба	same	false
+doom	гибель	same	false
+throne	трон	same	false
+crown	корона	same	false
+kingdom	королевство	same	false
+empire	империя	same	false
+republic	республика	same	false
+army	армия	same	false
+soldier	солдат	same	false
+commander	командир	same	false
+captain	капитан	same	false
+general	генерал	same	false
+prison	тюрьма	same	false
+escape	побег	same	false
+capture	поимка	same	false
+treasure	сокровище	same	false
+gold	золото	same	false
+silver	серебро	same	false
+diamond	алмаз	same	false
+ancient	древний	same	false
+powerful	могущественный	same	false
+dangerous	опасный	same	false
+brave	храбрый	same	false
+loyal	верный	same	false
+evil	злой	same	false
+shadow	тень	same	false
+ghost	призрак	same	false
+dragon	дракон	same	false
+demon	демон	same	false
+angel	ангел	same	false
+god	бог	same	false
+devil	дьявол	same	false
+they are enemies	они враги	same	false
+we are friends	мы друзья	same	false
+he is strong	он силен	same	false
+she is beautiful	она красива	same	false
+i am scared	я напуган	same	false
+it is dangerous	это опасно	same	false
+the hero found a magic sword	герой нашёл волшебный меч	same	false
+i love you	я люблю тебя	same	false
+where is the sword	где меч	same	false
+i need a potion	мне нужно зелье	same	false
+that is great	это отлично	same	false
+i am lost	я заблудился	same	false
+the detective found a clue	детектив нашёл улику	same	false
+who is the suspect	кто подозреваемый	same	false
+she was found dead	её нашли мёртвой	same	false
+search the crime scene	обыщи место преступления	same	false
+we need evidence	нам нужны доказательства	same	false
+he was murdered	его убили	same	false
+find the murder weapon	найди оружие убийства	same	false
+what is the motive	какой мотив	same	false
+i need a warrant	мне нужен ордер	same	false
+call the police	вызови полицию	same	false
+check the alibi	проверь алиби	same	false
+the suspect fled	подозреваемый сбежал	same	false
+he was arrested	его арестовали	same	false
+the jury found him guilty	жюри признало его виновным	same	false
+the judge sentenced him	судья приговорил его	same	false
+he was acquitted	его оправдали	same	false
+the appeal was denied	апелляция отклонена	same	false
+the killer escaped	убийца сбежал	same	false
+he confessed to the murder	он признался в убийстве	same	false
+the police arrested him	полиция арестовала его	same	false
+the case was closed	дело закрыто	same	false
+a		same	true
+academy	академия	same	false
+acquit	оправдывать	same	false
+after	после	same	false
+all	все	same	false
+along	вдоль	same	false
+although	хотя	same	false
+among	среди	same	false
+answer	отвечать	same	false
+appear	появляться	same	false
+area	зона	same	false
+arrest	арrestовать	same	false
+arrived	прибыл	same	false
+at	в	same	false
+attention	внимание	same	false
+banker	банкир	same	false
+become	становиться	same	false
+began	начавший	same	false
+behind	позади	same	false
+below	под	same	false
+bestseller	бестселлер	same	false
+break	ломать	same	false
+build	строить	same	false
+but	но	same	false
+calm	спокойно	same	false
+catherine	Кэтрин	same	false
+chat	чат	same	false
+checking	проверка	same	false
+chosen	выбранный	same	false
+claimed	утверждала	same	false
+closed	закрывший	same	false
+come	приходить	same	false
+conference	конференция	same	false
+confront	столкнуться	same	false
+convicted	осуждённый	same	false
+could	мог бы	same	false
+crafting	крафтинг	same	false
+crucial	решающий	same	false
+dedicate	посвятить	same	false
+denied	отклонено	same	false
+diary	дневник	same	false
+died	умерший	same	false
+does	делает	same	false
+drop	сброс	same	false
+during	во время	same	false
+early	рано	same	false
+enemies	враги	same	false
+entries	записи	same	false
+escaped	сбежавший	same	false
+everything	всё	same	false
+existed	существовавший	same	false
+feel	чувствовать	same	false
+find	найти	same	false
+fingerprints	отпечатки пальцев	same	false
+flee	сбежать	same	false
+forget	забывать	same	false
+fought	сражавшийся	same	false
+from	от	same	false
+giving	дающий	same	false
+gone	шедший	same	false
+grayson	Грейсон	same	false
+happen	случаться	same	false
+hardest	самый трудный	same	false
+hated	ненавидевший	same	false
+helmet	шлем	same	false
+her	её	same	false
+his	его	same	false
+if	если	same	false
+into	в	same	false
+item	предмет	same	false
+jail	тюрьма	same	false
+just	просто	same	false
+kept	хранивший	same	false
+killer	убийца	same	false
+know	знать	same	false
+later	позже	same	false
+legendary	легендарный	same	false
+let	позволять	same	false
+listened	слушавший	same	false
+lived	проживший	same	false
+looked	смотревший	same	false
+lost	проигравший	same	false
+louder	громче	same	false
+lover	любовник	same	false
+make	делать	same	false
+matched	совпадали	same	false
+me	мне	same	false
+meeting	встреча	same	false
+midnight	полночь	same	false
+monsters	монстры	same	false
+most	самый	same	false
+moved	двигавший	same	false
+murder	убийство	same	false
+must	должен	same	false
+need	нуждаться	same	false
+next	следующий	same	false
+not	не	same	false
+o'clock	часов	same	false
+often	часто	same	false
+once	однажды	same	false
+open	открывать	same	false
+outside	снаружи	same	false
+parker	Паркер	same	false
+perhaps	возможно	same	false
+play	играть	same	false
+press	пресса	same	false
+put	ставить	same	false
+quests	квесты	same	false
+rarely	редко	same	false
+recover	извлечь	same	false
+reexamined	пересмотрел	same	false
+relieve	облегчить	same	false
+remained	остававшийся	same	false
+repair	ремонт	same	false
+reward	награда	same	false
+sat	сидевший	same	false
+scream	крик	same	false
+seem	казаться	same	false
+sell	продавать	same	false
+serve	служить	same	false
+she	она	same	false
+show	показывать	same	false
+sit	сидеть	same	false
+sleap	спавший	same	false
+some	некоторые	same	false
+soon	скоро	same	false
+spoke	говоривший	same	false
+start	начинать	same	false
+stood	стоявший	same	false
+suspect	подозреваемый	same	false
+taken	взятый	same	false
+teleport	телепорт	same	false
+textbook	учебник	same	false
+the		same	true
+them	им	same	false
+they	они	same	false
+through	сквозь	same	false
+told	рассказанный	same	false
+too	тоже	same	false
+try	пытаться	same	false
+twelve	двенадцать	same	false
+under	под	same	false
+unless	если не	same	false
+us	нам	same	false
+very	очень	same	false
+waited	ждавший	same	false
+want	хотеть	same	false
+watson	Ватсон	same	false
+went	шедший	same	false
+which	который	same	false
+whom	кому	same	false
+will	будет	same	false
+within	внутри	same	false
+wore	носивший	same	false
+worn	ношенный	same	false
+write	писать	same	false
+you	Ю	same	false
+acquitted	оправданный	same	false
+almost	почти	same	false
+appeared	появившийся	same	false
+arrive	прибыть	same	false
+been	был	same	false
+believed	веривший	same	false
+building	здание	same	false
+can	может	same	false
+clan	клан	same	false
+common	обычный	same	false
+create	создавать	same	false
+defense	защита	same	false
+drunk	выпивший	same	false
+eaten	съеденный	same	false
+far	далеко	same	false
+filed	подала	same	false
+found	найденный	same	false
+goal	цель	same	false
+have	иметь	same	false
+helped	помогавший	same	false
+inventory	инвентарь	same	false
+jealousy	ревность	same	false
+leave	покидать	same	false
+listen	слушать	same	false
+map	карта	same	false
+mistress	хозяйка	same	false
+move	двигать	same	false
+of		same	true
+party	группа	same	false
+police	полиция	same	false
+read	читать	same	false
+released	освобождена	same	false
+saw	видевший	same	false
+seen	виденный	same	false
+skills	навыки	same	false
+spoken	говоренный	same	false
+stopped	остановившийся	same	false
+thank	поблагодарить	same	false
+there	там	same	false
+trade	торговля	same	false
+twist	поворот	same	false
+walk	идти	same	false
+whose	чей	same	false
+won	выигравший	same	false
+zone	зона	same	false
+beijing	Пекин	same	false
+seoul	Сеул	same	false
+bangkok	Бангкок	same	false
+delhi	Дели	same	false
+cairo	Каир	same	false
+lagos	Лагос	same	false
+buenos aires	Буэнос-Айрес	same	false
+rio de janeiro	Рио-де-Жанейро	same	true
+sao paulo	Сан-Паулу	same	false
+sydney	Сидней	same	false
+melbourne	Мельбурн	same	false
+toronto	Торонто	same	false
+vancouver	Ванкувер	same	false
+montreal	Монреаль	same	false
+amsterdam	Амстердам	same	false
+brussels	Брюссель	same	false
+vienna	Вена	same	false
+prague	Прага	same	false
+warsaw	Варшава	same	false
+budapest	Будапешт	same	false
+bucharest	Бухарест	same	false
+sofa	София	same	false
+zagreb	Загреб	same	false
+riga	Рига	same	false
+stockholm	Стокгольм	same	false
+edinburgh	Эдинбург	same	false
+cardiff	Кардифф	same	false
+madrid	Мадрид	same	false
+milan	Милан	same	false
+naples	Неаполь	same	false
+turin	Турин	same	false
+florence	Флоренция	same	false
+frankfurt	Франкфурт	same	false
+stuttgart	Штутгарт	same	false
+porto	Порту	same	false
+zurich	Цюрих	same	false
+basel	Базель	same	false
+lausanne	Лозанна	same	false
+dubai	Дубай	same	false
+doha	Доха	same	false
+riyadh	Эр-Рияд	same	false
+jeddah	Джидда	same	false
+kuala lumpur	Куала-Лумпур	same	false
+jakarta	Джакарта	same	false
+manila	Манила	same	false
+hanoi	Ханой	same	false
+taipei	Тайбэй	same	false
+hong kong	Гонконг	same	false
+guangzhou	Гуанчжоу	same	false
+shenzhen	Шэньчжэнь	same	false
+chengdu	Чэнду	same	false
+wuhan	Ухань	same	false
+hangzhou	Ханчжоу	same	false
+nanjing	Нанкин	same	false
+chongqing	Чунцин	same	false
+suzhou	Сучжоу	same	false
+tianjin	Тяньцзинь	same	false
+zhengzhou	Чжэнчжоу	same	false
+dalian	Далянь	same	false
+qingdao	Циндао	same	false
+kunming	Куньмин	same	false
+harbin	Харбин	same	false
+changchun	Чанчунь	same	false
+shenyang	Шэньян	same	false
+jinan	Цзинань	same	false
+fuzhou	Фучжоу	same	false
+hefei	Хэфэй	same	false
+nanning	Наньнин	same	false
+guiyang	Гуйян	same	false
+urumqi	Урумчи	same	false
+lhasa	Лхаса	same	false
+sanya	Санья	same	false
+zanzibar	Занзибар	same	false
+nairobi	Найроби	same	false
+johannesburg	Йоханнесбург	same	false
+casablanca	Касабланка	same	false
+marrakech	Марракеш	same	false
+accra	Аккра	same	false
+lima	Лима	same	false
+santiago	Сантьяго	same	false
+quito	Кито	same	false
+medellin	Медельин	same	false
+calgary	Калгари	same	false
+ottawa	Оттава	same	false
+quebec	Квебек	same	false
+halifax	Галифакс	same	false
+wellington	Веллингтон	same	false
+auckland	Окленд	same	false
+christchurch	Крайстчерч	same	false
+reykjavik	Рейкьявик	same	false
+tromso	Тромсё	same	false
+bergen	Берген	same	false
+gothenburg	Гётеборг	same	false
+malmo	Мальмё	same	false
+ghent	Гент	same	false
+bruges	Брюгге	same	false
+rotterdam	Роттердам	same	false
+pisa	Пиза	same	false
+bologna	Болонья	same	false
+verona	Верона	same	false
+padua	Падуя	same	false
+trieste	Триест	same	false
+palermo	Палермо	same	false
+catania	Катания	same	false
+bari	Бари	same	false
+lecce	Лече	same	false
+brescia	Брешиа	same	false
+bergamo	Бергамо	same	false
+modena	Модена	same	false
+parma	Парма	same	false
+cagliari	Кальяри	same	false
+ancona	Анкона	same	false
+perugia	Перуджа	same	false
+bolzano	Больцано	same	false
+innsbruck	Инсбрук	same	false
+salzburg	Зальцбург	same	false
+graz	Грац	same	false
+linz	Линц	same	false
+klagenfurt	Клагенфурт	same	false
+bratislava	Братислава	same	false
+kosice	Кошице	same	false
+ljubljana	Любляна	same	false
+maribor	Марибор	same	false
+piran	Пиран	same	false
+tirana	Тирана	same	false
+skopje	Скопье	same	false
+ohrid	Охрид	same	false
+podgorica	Подгорица	same	false
+sarajevo	Сараево	same	false
+mostar	Мостар	same	false
+tuzla	Тузла	same	false
+zenica	Зеница	same	false
+plovdiv	Пловдив	same	false
+varna	Варна	same	false
+burgas	Бургас	same	false
+cluj-napoca	Клуж-Напока	same	false
+timisoara	Тимишоара	same	false
+iasi	Яссы	same	false
+constanta	Констанца	same	false
+galati	Галац	same	false
+craiova	Крайова	same	false
+oradea	Орадя	same	false
+arad	Арад	same	false
+krakow	Краков	same	false
+wroclaw	Вроцлав	same	false
+poznan	Познань	same	false
+gdansk	Гданьск	same	false
+szczecin	Щецин	same	false
+lublin	Люблин	same	false
+katowice	Катовице	same	false
+bialystok	Белосток	same	false
+torun	Торунь	same	false
+debrecen	Дебрецен	same	false
+szeged	Сегед	same	false
+miskolc	Мишкольц	same	false
+pecs	Печ	same	false
+gyor	Дьёр	same	false
+veszprem	Веспрем	same	false
+brno	Брно	same	false
+ostrava	Острава	same	false
+plzen	Пльзень	same	false
+olomouc	Оломоуц	same	false
+liberec	Либерец	same	false
+st petersburg	Санкт-Петербург	same	false
+novosibirsk	Новосибирск	same	false
+yekaterinburg	Екатеринбург	same	false
+kazan	Казань	same	false
+nizhny novgorod	Нижний Новгород	same	false
+chelyabinsk	Челябинск	same	false
+samara	Самара	same	false
+omsk	Омск	same	false
+krasnoyarsk	Красноярск	same	false
+voronezh	Воронеж	same	false
+perm	Пермь	same	false
+krasnodar	Краснодар	same	false
+saratov	Саратов	same	false
+tyumen	Тюмень	same	false
+izhevsk	Ижевск	same	false
+barnaul	Барнаул	same	false
+irkutsk	Иркутск	same	false
+khabarovsk	Хабаровск	same	false
+vladivostok	Владивосток	same	false
+yaroslavl	Ярославль	same	false
+makhachkala	Махачкала	same	false
+tomsk	Томск	same	false
+orenburg	Оренбург	same	false
+novokuznetsk	Новокузнецк	same	false
+ryazan	Рязань	same	false
+penza	Пенза	same	false
+kirov	Киров	same	false
+tula	Тула	same	false
+kursk	Курск	same	false
+stavropol	Ставрополь	same	false
+tver	Тверь	same	false
+ivanovo	Иваново	same	false
+bryansk	Бряansk	same	false
+magnitogorsk	Магнитогорск	same	false
+sochi	Сочи	same	false
+vladimir	Владимир	same	false
+smolensk	Смоленск	same	false
+arkhangelsk	Архангельск	same	false
+chita	Чита	same	false
+kaliningrad	Калининград	same	false
+kostroma	Кострома	same	false
+kurgan	Курган	same	false
+murmansk	Мурманск	same	false
+dushanbe	Душанбе	same	false
+tashkent	Ташкент	same	false
+almaty	Алматы	same	false
+astana	Астана	same	false
+bishkek	Бишкек	same	false
+tbilisi	Тбилиси	same	false
+yerevan	Ереван	same	false
+tehran	Тегеран	same	false
+isfahan	Исфахан	same	false
+shiraz	Шираз	same	false
+tabriz	Табриз	same	false
+mashhad	Мешхед	same	false
+islamabad	Исламабад	same	false
+karachi	Карачи	same	false
+lahore	Лахор	same	false
+faisalabad	Файсалабад	same	false
+rawalpindi	Равалпинди	same	false
+multan	Мултан	same	false
+peshawar	Пешавар	same	false
+quetta	Кветта	same	false
+mumbai	Мумбаи	same	false
+bangalore	Бангалор	same	false
+chennai	Ченнаи	same	false
+kolkata	Колката	same	false
+pune	Пуна	same	false
+ahmedabad	Ахмедабад	same	false
+jaipur	Джайпур	same	false
+lucknow	Лакхнау	same	false
+kanpur	Канпур	same	false
+nagpur	Нагпур	same	false
+indore	Индаур	same	false
+bhopal	Бхопал	same	false
+patna	Патна	same	false
+varanasi	Варанаси	same	false
+srinagar	Сринагар	same	false
+amritsar	Амритsar	same	false
+ranchi	Ранчи	same	false
+coimbatore	Коймбатур	same	false
+jabalpur	Джабалпур	same	false
+gwalior	Гвалиор	same	false
+jodhpur	Джодхпур	same	false
+madurai	Мадурай	same	false
+raipur	Райпур	same	false
+kochi	Кочи	same	false
+chandigarh	Чандигарх	same	false
+dehradun	Дехрадун	same	false
+udaipur	Удайпур	same	false
+colombo	Коломбо	same	false
+kandy	Канди	same	false
+galle	Галле	same	false
+dhaka	Дакка	same	false
+chittagong	Читтагонг	same	false
+kathmandu	Катманду	same	false
+pokhara	Покхара	same	false
+thimphu	Тхимпху	same	false
+naypyidaw	Найпьидо	same	false
+yangon	Янгон	same	false
+mandalay	Мандалай	same	false
+phnom penh	Пномпень	same	false
+vientiane	Вьентьян	same	false
+ho chi minh city	Хо Ши Мин	same	false
+da nang	Дананг	same	false
+nha trang	Нячанг	same	false
+chiang mai	Чиангмай	same	false
+phuket	Пхукет	same	false
+pattaya	Паттайя	same	false
+penang	Пенанг	same	false
+kota kinabalu	Кота-Кинабалу	same	false
+malacca	Малакка	same	false
+kuching	Кучинг	same	false
+surabaya	Сурабая	same	false
+bandung	Бандунг	same	false
+medan	Медан	same	false
+semarang	Семаранг	same	false
+makassar	Макассар	same	false
+cebu	Себу	same	false
+davao	Давао	same	false
+kaohsiung	Каосюн	same	false
+taichung	Тайчжун	same	false
+tainan	Тайнань	same	false
+macau	Макао	same	false
+osaka	Осака	same	false
+kyoto	Киото	same	false
+nagoya	Нагоя	same	false
+sapporo	Саппоро	same	false
+fukuoka	Фукуока	same	false
+kobe	Кобе	same	false
+yokohama	Иокогама	same	false
+kawasaki	Кавасаки	same	false
+hiroshima	Хиросима	same	false
+sendai	Сендай	same	false
+nagasaki	Нагасаки	same	false
+nara	Нара	same	false
+kanazawa	Канадзава	same	false
+kagoshima	Кагосима	same	false
+toyota	Тойота	same	false
+busan	Пусан	same	false
+daegu	Тэгу	same	false
+incheon	Инчхон	same	false
+gwangju	Кванджу	same	false
+daejeon	Тэджон	same	false
+ulsan	Ульсан	same	false
+suwon	Сувон	same	false
+goyang	Гоян	same	false
+yongin	Йонгин	same	false
+cheonan	Чхонан	same	false
+jeonju	Чонджу	same	false
+anyang	Анян	same	false
+pohang	Пхёнчхан	same	false
+jeju	Чеджудо	same	false
+gangneung	Каннын	same	false
+sokcho	Сокчо	same	false
+masan	Масан	same	false
+jinju	Чинджу	same	false
+mokpo	Мокпхо	same	false
+suncheon	Сунчхон	same	false
+gyeongju	Кёнджу	same	false
+gimhae	Кимхэ	same	false
+changwon	Чанвон	same	false
+andong	Андонг	same	false
+yeongju	Йонджу	same	false
+george town	Джорджтаун	same	false
+hague	Гаага	same	false
+tallinn	Таллин	same	false
+vilnius	Вильнюс	same	false
+helsinki	Хельсинки	same	false
+oslo	Осло	same	false
+copenhagen	Копенгаген	same	false
+dublin	Дублин	same	false
+lisbon	Лиссабон	same	false
+barcelona	Барселона	same	false
+venice	Венеция	same	false
+munich	Мюнхен	same	false
+hamburg	Гамбург	same	false
+cologne	Кёльн	same	false
+dresden	Дрезден	same	false
+rome	Рим	same	false
+berlin	Берлин	same	false
+paris	Париж	same	false
+london	Лондон	same	false
+moscow	Москва	same	false
+tokyo	Токио	same	false
+washington	Вашингтон	same	false
+new york	Нью-Йорк	same	false
+kiev	Киев	same	false
+minsk	Минск	same	false
+seychelles	Сейшелы	same	false
+fiji	Фиджи	same	false
+mauritius	Маврикий	same	false
+malta	Мальта	same	false
+cyprus	Кипр	same	false
+crete	Крит	same	false
+santorini	Санторини	same	false
+mykonos	Миконос	same	false
+ibiza	Ибица	same	false
+mallorca	Мальорка	same	false
+tenerife	Тенерифе	same	false
+canary islands	Канарские острова	same	false
+black sea	Чёрное море	same	false
+red sea	Красное море	same	false
+mediterranean	Средиземное море	same	false
+atlantic	Атлантический океан	same	false
+pacific	Тихий океан	same	false
+indian ocean	Индийский океан	same	false
+arctic	Арктика	same	false
+amazon	Амазон	same	false
+nile	Нил	same	false
+yangtze	Янцзы	same	false
+volga	Волга	same	false
+danube	Дунай	same	false
+rhine	Рейн	same	false
+thames	Темза	same	false
+seine	Сена	same	false
+dnieper	Днепр	same	false
+don	Дон	same	false
+urals	Урал	same	false
+caucasus	Кавказ	same	false
+siberia	Сибирь	same	false
+amazonia	Амазония	same	false
+sahara	Сахара	same	false
+gobi	Гоби	same	false
+kalahari	Калахари	same	false
+outback	Аутбек	same	false
+great wall	Великая Китайская стена	same	false
+taj mahal	Тадж-Махал	same	false
+colosseum	Колизей	same	false
+eiffel tower	Эйфелева башня	same	false
+big ben	Биг-Бен	same	false
+statue of liberty	Статуя Свободы	same	false
+white house	Белый дом	same	false
+kremlin	Кремль	same	false
+red square	Красная площадь	same	false
+microsoft	Майкрософт	same	false
+google	Гугл	same	false
+apple	Эппл	same	false
+facebook	Фейсбук	same	false
+twitter	Твиттер	same	false
+youtube	Ютуб	same	false
+instagram	Инстаграм	same	false
+telegram	Телеграм	same	false
+whatsapp	Вотсап	same	false
+netflix	Нетфликс	same	false
+spotify	Спотифай	same	false
+uber	Убер	same	false
+airbnb	Эйэрбиэнби	same	false
+china	Китай	same	false
+japan	Япония	same	false
+korea	Корея	same	false
+india	Индия	same	false
+russia	Россия	same	false
+germany	Германия	same	false
+france	Франция	same	false
+italy	Италия	same	false
+spain	Испания	same	false
+portugal	Португалия	same	false
+england	Англия	same	false
+scotland	Шотландия	same	false
+wales	Уэльс	same	false
+ireland	Ирландия	same	false
+norway	Норвегия	same	false
+sweden	Швеция	same	false
+denmark	Дания	same	false
+finland	Финляндия	same	false
+iceland	Исландия	same	false
+switzerland	Швейцария	same	false
+austria	Австрия	same	false
+belgium	Бельгия	same	false
+netherlands	Нидерланды	same	false
+poland	Польша	same	false
+czech republic	Чехия	same	false
+slovakia	Словакия	same	false
+hungary	Венгрия	same	false
+romania	Румыния	same	false
+bulgaria	Болгария	same	false
+serbia	Сербия	same	false
+croatia	Хорватия	same	false
+slovenia	Словения	same	false
+albania	Албания	same	false
+greece	Греция	same	false
+turkey	Турция	same	false
+egypt	Египет	same	false
+morocco	Марокко	same	false
+tunisia	Тунис	same	false
+algeria	Алжир	same	false
+nigeria	Нигерия	same	false
+kenya	Кения	same	false
+ethiopia	Эфиопия	same	false
+south africa	Южная Африка	same	false
+brazil	Бразилия	same	false
+argentina	Аргентина	same	false
+chile	Чили	same	false
+colombia	Колумбия	same	false
+peru	Перу	same	false
+mexico	Мексика	same	false
+cuba	Куба	same	false
+jamaica	Ямайка	same	false
+canada	Канада	same	false
+australia	Австралия	same	false
+new zealand	Новая Зеландия	same	false
+philippines	Филиппины	same	false
+vietnam	Вьетнам	same	false
+thailand	Таиланд	same	false
+indonesia	Индонезия	same	false
+malaysia	Малайзия	same	false
+singapore	Сингапур	same	false
+united states	США	same	false
+united kingdom	Великобритания	same	false
+usa	США	same	false
+uk	Великобритания	same	false
+uae	ОАЭ	same	false
+saudi arabia	Саудовская Аравия	same	false
+pakistan	Пакистан	same	false
+bangladesh	Бангладеш	same	false
+nepal	Непал	same	false
+sri lanka	Шри-Ланка	same	false
+myanmar	Мьянма	same	false
+cambodia	Камбоджа	same	false
+laos	Лаос	same	false
+mongolia	Монголия	same	false
+taiwan	Тайвань	same	false
+ukraine	Украина	same	false
+belarus	Беларусь	same	false
+georgia	Грузия	same	false
+armenia	Армения	same	false
+azerbaijan	Азербайджан	same	false
+kazakhstan	Казахстан	same	false
+uzbekistan	Узбекистан	same	false
+turkmenistan	Туркменистан	same	false
+tajikistan	Таджикистан	same	false
+kyrgyzstan	Кыргызстан	same	false
+antarctica	Антарктида	same	false
+africa	Африка	same	false
+europe	Европа	same	false
+asia	Азия	same	false
+america	Америка	same	false
+middle east	Ближний Восток	same	false
+far east	Дальний Восток	same	false
+southeast asia	Юго-Восточная Азия	same	false
+central asia	Центральная Азия	same	false
+south asia	Южная Азия	same	false
+east asia	Восточная Азия	same	false
+north america	Северная Америка	same	false
+south america	Южная Америка	same	false
+central america	Центральная Америка	same	false
+ Boothill	boothill	same	true
+ Seymour	seymour	same	true
+2b	Ту Би	same	false
+EDI	edi	same	true
+abbacchio	Аббакио	same	false
+acheron	Ахерон	same	false
+aether	Эйтер	same	false
+aigis	Айгис	same	false
+akaza	Аказа	same	false
+aki	Аки	same	false
+alatreon	Алатреон	same	false
+alduin	Алдуин	same	false
+alena	Алена	same	false
+alhaitham	Аль-Хайсам	same	false
+altair	Альтыр	same	false
+anaxa	Анакса	same	false
+android	андроид	same	false
+android 18	Андроид 18	same	false
+ansem	Ансем	same	false
+aqua	Аква	same	false
+arbitrator	Арбитратор	same	false
+archon	Архон	same	false
+argenti	Аргенти	same	false
+arlecchino	Арлеккино	same	false
+arngeir	Арнгейр	same	false
+arona	Арона	same	false
+artorias	Арториас	same	false
+ashley	Эшли	same	false
+asuna	Асуна	same	false
+atreus	Атрейс	same	false
+avdol	Авдол	same	false
+ayaka	Аяка	same	false
+azena	Азена	same	false
+azена	Азена	same	false
+baldr	Бальдр	same	false
+barret	Баррет	same	false
+bayek	Баек	same	false
+beam	Бим	same	false
+beatrix	Беатрикс	same	false
+bernadetta	Бернадетта	same	false
+bethany	Бетани	same	false
+black swan	Чёрный Лебедь	same	false
+blaidd	Блайд	same	false
+boros	Борос	same	false
+brachydios	Брахиодиос	same	false
+brant	Брант	same	false
+brelshza	Брелша	same	false
+broly	Броли	same	false
+brook	Брук	same	false
+bruno	Бруно	same	false
+bunny	Банни	same	false
+byakuya	Бякуя	same	false
+byleth	Байлет	same	false
+caelus	Каэлус	same	false
+cait sith	Кейт Сиф	same	false
+calcharо	Калчаро	same	false
+carver	Карвер	same	false
+casterice	Касторис	same	false
+cell	Селл	same	false
+cgi	Чжи	same	false
+chasca	Часка	same	false
+chise	Тисэ	same	false
+chongyue	Чун Юэ	same	false
+chrom	Кром	same	false
+ciri	Цири	same	false
+clara	Клара	same	false
+clive	Клайв	same	false
+cloud	Клауд	same	false
+cortana	Кортана	same	false
+cullen	Каллен	same	false
+dagon	Дагон	same	false
+dandelion	Дендилион	same	false
+deadly sins	Смертные Грехи	same	false
+degenbrecher	Дегенбрехер	same	false
+delphine	Дельфин	same	false
+dende	Денде	same	false
+devola	Девола	same	false
+dijkstra	Дикстра	same	false
+dimitri	Димитри	same	false
+doctor	Доктор	same	false
+dominant	Доминант	same	false
+dorian	Дориан	same	false
+dovahkiin	Доваакин	same	false
+dr. ratio	Доктор Рэйшо	same	false
+dragonborn	Драконорождённый	same	false
+dudley	Дадли	same	false
+eden	Эден	same	false
+eiko	Эйко	same	false
+eivor	Эйвор	same	false
+elysia	Элисия	same	false
+emil	Эмиль	same	false
+erdrick	Эрдрик	same	false
+eskel	Эскель	same	false
+eunie	Юни	same	false
+eyjafjalla	Эйяфьядла	same	false
+fang	Фанг	same	false
+fatalis	Фаталис	same	false
+felix	Феликс	same	false
+firefly	Светлячок	same	false
+freminet	Фреминет	same	false
+frieza	Фриза	same	false
+fu xuan	Фу Сюань	same	false
+fugue	Фуга	same	false
+futaba	Футаба	same	false
+fyleth	Файлет	same	false
+galgali	Галгали	same	false
+garnet	Гарнет	same	false
+garrus	Гаррус	same	false
+genesis	Дженесис	same	false
+geo archon	Гео Архон	same	false
+gideon	Гидеон	same	false
+giorno giovanna	Джиорно Джованна	same	false
+glavenus	Глэвенус	same	false
+godfrey	Годфри	same	false
+gohan	Гохан	same	false
+goku black	Гоку Чёрный	same	false
+gore magala	Гор Магала	same	false
+gorou	Горо	same	false
+goten	Готен	same	false
+greil	Грейл	same	false
+griseo	Грисео	same	false
+guy	Гай	same	false
+gyokko	Гёкко	same	false
+halsey	Халси	same	false
+hantengu	Хантэнгу	same	false
+haru	Хару	same	false
+hashirama	Хасирама	same	false
+hawke	Хоук	same	false
+herta	Херта	same	false
+himeno	Химено	same	false
+hit	Хит	same	false
+hokage	Хокагэ	same	false
+hook	Хук	same	false
+hoshiguma	Хосигума	same	false
+hu tao	Ху Тао	same	false
+hytham	Хитам	same	false
+ichigo	Итиго	same	false
+iggy	Игги	same	false
+iji	Иджи	same	false
+inazuma	Инадзума	same	false
+inosuke	Иносукэ	same	false
+irvine	Ирвин	same	false
+itachi	Итачи	same	false
+ivor	Ивор	same	false
+jade	Джейд	same	false
+jean	Джин	same	false
+jessica	Джессика	same	false
+jill	Джилл	same	false
+jing yuan	Цзин Юань	same	false
+jiraiya	Дзирая	same	false
+jiyan	Цзи Янь	same	false
+joker	Джокер	same	false
+josie	Джози	same	false
+jotaro	Дзётаро	same	false
+kachina	Качина	same	false
+kaidan	Кайдан	same	false
+kaigaku	Кайгаку	same	false
+kairi	Каири	same	false
+kakul-saydon	Какул-Сэйдон	same	false
+kale	Кале	same	false
+kanji	Кандзи	same	false
+kassandra	Кассандра	same	false
+kazuha	Кадзуха	same	false
+kiana	Киана	same	false
+king kai	Король Кай	same	false
+klee	Кли	same	false
+koharu	Кохару	same	false
+kokushibo	Кокусибо	same	false
+kratos	Кратос	same	false
+kujou	Кудзё	same	false
+kut-ku	Кут-Ку	same	false
+lanz	Ланц	same	false
+lasky	Ласки	same	false
+lautrec	Лотрек	same	false
+legiana	Леджана	same	false
+leif	Лейф	same	false
+leonardo	Леонардо	same	false
+liberty prime	Либерти Прайм	same	false
+lilina	Лилина	same	false
+lingyang	Лин Ян	same	false
+loghain	Логхейн	same	false
+louise	Луиза	same	false
+lucина	Люцина	same	false
+luka	Лука	same	false
+lumine	Люмин	same	false
+luocha	Лоша	same	false
+lynette	Линетт	same	false
+lynn	Линн	same	false
+madara	Мадара	same	false
+mahiru	Махиру	same	false
+makoto	Макото	same	false
+maliketh	Малекит	same	false
+march	Марч	same	false
+marika	Марика	same	false
+marluxia	Марлуксия	same	false
+master chief	Мастер Чиф	same	false
+matthew	Мэтью	same	false
+mei	Мэй	same	false
+mercenary	наёмник	same	false
+mickey	Микки	same	false
+mika	Мика	same	false
+mine	Майн	same	false
+miquella	Микелла	same	false
+misha	Миша	same	false
+mitsuri	Мицури	same	false
+mizutsune	Мицуцунэ	same	false
+mobius	Мёбиус	same	false
+mohg	Мог	same	false
+mordin	Мордин	same	false
+morgott	Морготт	same	false
+mostima	Мостима	same	false
+mr. popo	Мистер Попо	same	false
+mudrock	Мадрок	same	false
+mutsuki	Муцуки	same	false
+mydei	Мидей	same	false
+nagisa	Нагиса	same	false
+nameless king	Безымянный Король	same	false
+namielle	Намиэлл	same	false
+narancia	Наранча	same	false
+nargacуга	Наргакуга	same	false
+navia	Навия	same	false
+nene	Ненэ	same	false
+neru	Неру	same	false
+nezuko	Незуко	same	false
+nilou	Нилу	same	false
+nito	Нито	same	false
+noah	Ноа	same	false
+nonomi	Нономи	same	false
+nyx	Никс	same	false
+odbегатон	Одобегатон	same	false
+odogaron	Одогарон	same	false
+ornstein	Орнcтейн	same	false
+ororon	Оророн	same	false
+paarthurnax	Паартурнакс	same	false
+patches	Пэтчс	same	false
+persona	Персона	same	false
+phrolova	Фролова	same	false
+pochita	Почита	same	false
+pod	Под	same	false
+popola	Попола	same	false
+princi	Принци	same	false
+prompto	Промпто	same	false
+qingque	Цинцюэ	same	false
+quistis	Кустиc	same	false
+radahn	Радан	same	false
+raiden	Райден	same	false
+rath	Рат	same	false
+rathian	Ратиан	same	false
+reah	Реа	same	false
+reimu	Рейму	same	false
+renji	Рэндзи	same	false
+rex	Рекс	same	false
+rhea	Рея	same	false
+riku	Рику	same	false
+rise	Райс	same	false
+rogier	Рожье	same	false
+rover	Ровер	same	false
+roy	Рой	same	false
+rukia	Рукia	same	false
+ryuji	Рюдзи	same	false
+saileach	Сайлиш	same	false
+saiyan	сайян	same	false
+sanemi	Санеми	same	false
+sanji	Санджи	same	false
+saria	Сария	same	false
+sasuke	Саске	same	false
+saïx	Сайкс	same	false
+seath	Сиф	same	false
+seele	Зеелэ	same	false
+selphie	Селфи	same	false
+sephiroth	Сефирот	same	false
+serryl	Серрил	same	false
+seth	Сет	same	false
+shanks	Шэнкс	same	false
+shenhe	Шэнь Хэ	same	false
+shikamaru	Шикамару	same	false
+shinobu	Синобу	same	false
+shogun	шогун	same	false
+shulk	Шалк	same	false
+sif	Сиф	same	false
+sigurd	Сигурд	same	false
+silverash	СильверЭш	same	false
+snow	Сноу	same	false
+solas	Солас	same	false
+sora	Сора	same	false
+soul society	Душа Общества	same	false
+speedwagon	Спидвагон	same	false
+steiner	Штейнер	same	false
+stelle	Стелла	same	false
+stroheim	Стройм	same	false
+sunday	Воскресенье	same	false
+sushang	Сушан	same	false
+sylvain	Сильвен	same	false
+taion	Таон	same	false
+tanjiro	Тандзиро	same	false
+tatsumaki	Тацумаки	same	false
+tengen	Тэнген	same	false
+thamur	Тамур	same	false
+the herta	Херта	same	false
+thoma	Тома	same	false
+thorns	Торнс	same	false
+tifa	Тифа	same	false
+tingyun	Тин Юнь	same	false
+topaz	Топаз	same	false
+toshiro	Тосиро	same	false
+trish	Триш	same	false
+trunks	Транкс	same	false
+turian	Туриан	same	false
+typhon	Тайфон	same	false
+ulfric	Ульфрик	same	false
+valstrax	Вальстракс	same	false
+vanille	Ванилль	same	false
+vegeta	Вегета	same	false
+velkhana	Велькхана	same	false
+ven	Вен	same	false
+verina	Верина	same	false
+vexen	Вексен	same	false
+vincent	Винсент	same	false
+vivi	Виви	same	false
+vykas	Викас	same	false
+wanderer	Странник	same	false
+whis	Вис	same	false
+wilds	пустоши	same	false
+wrex	Рекс	same	false
+xemnas	Земнас	same	false
+xigbar	Зигбар	same	false
+xion	Сион	same	false
+yanqing	Яньцин	same	false
+yennefer	Йеннифэр	same	false
+yoimiya	Ёимия	same	false
+yukari	Юкари	same	false
+yun ka	Юнь Кa	same	false
+yunli	Юнь Ли	same	false
+yuzu	Юзу	same	false
+zamasu	Замасу	same	false
+zenitsu	Дзенитсу	same	false
+zhongli	Чжун Ли	same	false
+zinogre	Зиногрэ	same	false
+zoro	Зоро	same	false
+A		same	true
+AGAINST	против	same	false
+AN		same	true
+ARREST	арrestовать	same	false
+BAD	плохо	same	false
+BELIEVE	верить	same	false
+BREAK	ломать	same	false
+CAN	может	same	false
+CITY	город	same	false
+CONFERENCE	конференция	same	false
+CRAFT	крафт	same	false
+DENY	отрицать	same	false
+DROP	сброс	same	false
+ENOUGH	достаточно	same	false
+FAR	далеко	same	false
+FINGERPRINTS	отпечатки пальцев	same	false
+FRIEND	друг	same	false
+GUILD	гильдия	same	false
+HEALTH	здоровье	same	false
+HOME	дома	same	false
+ITEMS	предметы	same	false
+KILLER	убийца	same	false
+LESTRADE	Лестрейд	same	false
+LOOT	добыча	same	false
+MAKE	делать	same	false
+MESSAGE	сообщение	same	false
+MOSTLY	в основном	same	false
+NEED	нуждаться	same	false
+OF		same	true
+OVER	над	same	false
+POTION	зелье	same	false
+RARE	редкий	same	false
+RELIEVED	облегчена	same	false
+SAT	сидевший	same	false
+SENTENCED	приговорён	same	false
+SHORT	низкий	same	false
+SMALL	маленький	same	false
+STAND	стоять	same	false
+SUSPECTS	подозреваемые	same	false
+THE		same	true
+TODAY	сегодня	same	false
+TURN	поворачивать	same	false
+US	нам	same	false
+WAS	был	same	false
+WHERE	где	same	false
+WITHIN	внутри	same	false
+XP	опыт	same	false
+a.		same	true
+allowed.	позволенный	same	false
+anything.	что-нибудь	same	false
+at.	в	same	false
+begin.	начинать	same	false
+bought.	купивший	same	false
+catherine.	Кэтрин	same	false
+clan.	клан	same	false
+convict.	осуждать	same	false
+dedicate.	посвятить	same	false
+drank.	пивший	same	false
+enough.	достаточно	same	false
+feel.	чувствовать	same	false
+fleeing.	бегущий	same	false
+goal.	цель	same	false
+hated.	ненавидевший	same	false
+holmes.	Холмс	same	false
+its.	его	same	false
+know.	знать	same	false
+little.	мало	same	false
+loved.	любивший	same	false
+meeting.	встреча	same	false
+mostly.	в основном	same	false
+new.	новый	same	false
+once.	однажды	same	false
+persistence.	настойчивость	same	false
+quest.	квест	same	false
+relieve.	облегчить	same	false
+saw.	видевший	same	false
+server.	сервер	same	false
+sit.	сидеть	same	false
+speak.	говорить	same	false
+sunset.	закат	same	false
+the.		same	true
+tomorrow.	завтра	same	false
+twist.	поворот	same	false
+waited.	ждавший	same	false
+were.	были	same	false
+with.	с	same	false
+yes.	да	same	false
+go to a now	идти к сейчас	same	false
+go to also now	идти к тоже сейчас	same	false
+go to arrested now	идти к арестован сейчас	same	false
+go to began now	идти к начавший сейчас	same	false
+go to broken now	идти к сломанный сейчас	same	false
+go to choose now	идти к выбирать сейчас	same	false
+go to confront now	идти к столкнуться сейчас	same	false
+go to defense now	идти к защита сейчас	same	false
+go to dusk now	идти к сумерки сейчас	same	false
+go to existed now	идти к существовавший сейчас	same	false
+go to for now	идти к для сейчас	same	false
+go to guild now	идти к гильдия сейчас	same	false
+go to her now	идти к её сейчас	same	false
+go to its now	идти к его сейчас	same	false
+go to leave now	идти к покидать сейчас	same	false
+go to lost now	идти к проигравший сейчас	same	false
+go to meant now	идти к означавший сейчас	same	false
+go to mp now	идти к мана сейчас	same	false
+go to o'clock now	идти к часов сейчас	same	false
+go to pay now	идти к платить сейчас	same	false
+go to ran now	идти к бежавший сейчас	same	false
+go to repair now	идти к ремонт сейчас	same	false
+go to sentenced now	идти к приговорён сейчас	same	false
+go to skill now	идти к навык сейчас	same	false
+go to start now	идти к начинать сейчас	same	false
+go to ten now	идти к десять сейчас	same	false
+go to tomorrow now	идти к завтра сейчас	same	false
+go to unless now	идти к если не сейчас	same	false
+go to weak now	идти к слабый сейчас	same	false
+go to win now	идти к выигрывать сейчас	same	false
+go to you now	идти к Ю сейчас	same	false
