@@ -1,0 +1,131 @@
+name: ScreenOCR Pro Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_alive_min:
+        description: 'Сколько минут держать сервер (0 = пока процесс жив)'
+        required: false
+        default: '120'
+        type: string
+  repository_dispatch:
+    types: [start-server]
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install server deps
+        run: |
+          pip install --quiet pillow numpy
+          pip install --quiet edge-tts
+          pip install --quiet rapidocr-onnxruntime
+          pip install --quiet onnxruntime
+          pip install --quiet requests
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgl1 libglib2.0-0 >/dev/null 2>&1 || true
+
+      - name: Install cloudflared (быстрый туннель)
+        run: |
+          mkdir -p /tmp/cf
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o /tmp/cf/cloudflared
+          chmod +x /tmp/cf/cloudflared
+          /tmp/cf/cloudflared --version
+
+      - name: Start pro-server on :8074
+        working-directory: ${{ github.workspace }}
+        run: |
+          nohup python server_pro.py --port 8074 --public > /tmp/server.log 2>&1 &
+          echo "PID=$!"
+          # ждём health
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8074/health && break
+            sleep 1
+          done
+          echo "--- server.log ---"
+          tail -5 /tmp/server.log
+
+      - name: Start cloudflared tunnel
+        id: tunnel
+        run: |
+          rm -f /tmp/cf_url.txt
+          nohup /tmp/cf/cloudflared tunnel --url http://127.0.0.1:8074 --no-autoupdate > /tmp/cf.log 2>&1 &
+          echo "cloudflared PID=$!"
+          for i in $(seq 1 90); do
+            URL=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" /tmp/cf.log | head -1 | tr -d '\r')
+            if [ -n "$URL" ]; then
+              echo "$URL" > /tmp/cf_url.txt
+              break
+            fi
+            sleep 1
+          done
+          URL=$(cat /tmp/cf_url.txt 2>/dev/null || echo "")
+          if [ -z "$URL" ]; then
+            echo "Туннель не поднялся. cf.log:"; cat /tmp/cf.log
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo
+          echo "=============================================="
+          echo "  ПОДКЛЮЧЕНИЕ С ТЕЛЕФОНА (Web/PWA):"
+          echo "  $URL"
+          echo "=============================================="
+
+      - name: Проверка публичного доступа
+        run: |
+          URL=$(cat /tmp/cf_url.txt)
+          echo "Проверяем $URL/health ..."
+          for i in $(seq 1 30); do
+            if curl -fsS "$URL/health" >/dev/null 2>&1; then echo "OK: сервер доступен публично"; break; fi
+            sleep 2
+          done
+          curl -sS "$URL/health" | head -c 300 || echo " (!) публичный health не ответил"
+          echo
+
+      - name: Уведомление URL в summary
+        run: |
+          URL=$(cat /tmp/cf_url.txt)
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## 📱 ScreenOCR Pro Server запущен
+
+          **URL для телефона (PWA):** [\`$URL\`]($URL)
+
+          Открой этот адрес в браузере телефона (Chrome → "Добавить на главный экран").
+          Или передай его в Android-приложение (ScreenOCR Client) на экране подключения.
+
+          > Docker/runner вариант: сервер с полной проф-логикой (OCR, TTS Edge, перевод, cleaner) работает в этом workflow. Чтобы остановить — Cancel job.
+          EOF
+
+      - name: Ожидание (сервер жив)
+        id: hold
+        run: |
+          url=$(cat /tmp/cf_url.txt)
+          # keep alive loop, печатаем URL при изменениях
+          if [ "${{ github.event.inputs.keep_alive_min }}" != "" ] && [ "${{ github.event.inputs.keep_alive_min }}" != "0" ]; then
+            echo "Держим сервер ${{ github.event.inputs.keep_alive_min }} мин. URL: $url"
+            sleep "$(( ${{ github.event.inputs.keep_alive_min }} * 60 ))"
+          else
+            echo "Сервер жив. URL: $url"
+            echo "Остановите job (Cancel) когда закончите."
+            while true; do
+              if ! kill -0 $(pgrep -f "server_pro.py") 2>/dev/null; then
+                echo "!!! server_pro.py умер:"; tail -30 /tmp/server.log; exit 1
+              fi
+              if ! pgrep -f cloudflared >/dev/null; then
+                echo "!!! cloudflared умер:"; tail -30 /tmp/cf.log; exit 1
+              fi
+              sleep 30
+            done
+          fi

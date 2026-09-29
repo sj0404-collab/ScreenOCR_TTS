@@ -1,0 +1,45 @@
+# Python
+venv311/
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs & traces
+*.log
+*.err
+*.out
+hang_trace.txt
+
+# Local user state (config.json contains PERSONAL API KEYS - never commit!)
+config.json
+regions.json
+learned_dict.json
+
+# User screen content (privacy: screenshots of your desktop)
+screenshots/
+
+# Runtime caches / generated data (recreated automatically)
+logs/
+ocr_logs/
+ocr_logs_simple/
+tts_cache/
+UserData/
+DB/
+DIC/
+setting/
+voice_samples/
+.zen-agent/
+CACHEDIR.TAG
+
+# HuggingFace model cache (auto-downloaded on first run, >100MB files)
+models/models--*/
+*.safetensors
+
+# Root debug outputs (screenshots, dumps - regenerable, privacy!)
+/*.png
+/*.txt
+!requirements.txt
+
+# 3rd-party driver pack (download from vb-audio.com if needed)
+VBCABLE_Driver_Pack45/
+VBCABLE_Driver_Pack45.zip

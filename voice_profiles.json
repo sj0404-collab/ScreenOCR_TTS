@@ -1,0 +1,54 @@
+{
+  "Dmitry (default)": {
+    "voice": "ru-RU-DmitryNeural",
+    "voice_type": "edge",
+    "pitch": 0,
+    "rate": 0,
+    "volume": 1.0,
+    "emotion": "normal",
+    "noise_level": 0,
+    "description": "Default Russian male",
+    "is_builtin": true,
+    "role_pitch": {},
+    "role_rate": {}
+  },
+  "Svetlana (default)": {
+    "voice": "ru-RU-SvetlanaNeural",
+    "voice_type": "edge",
+    "pitch": 0,
+    "rate": 0,
+    "volume": 1.0,
+    "emotion": "normal",
+    "noise_level": 0,
+    "description": "Default Russian female",
+    "is_builtin": true,
+    "role_pitch": {},
+    "role_rate": {}
+  },
+  "Aleksandr (RHVoice)": {
+    "voice": "rhvoice:Aleksandr",
+    "voice_type": "rhvoice",
+    "pitch": 0,
+    "rate": 0,
+    "volume": 1.0,
+    "emotion": "normal",
+    "noise_level": 0,
+    "description": "RHVoice Russian male",
+    "is_builtin": true,
+    "role_pitch": {},
+    "role_rate": {}
+  },
+  "Elena (RHVoice)": {
+    "voice": "rhvoice:Elena",
+    "voice_type": "rhvoice",
+    "pitch": 0,
+    "rate": 0,
+    "volume": 1.0,
+    "emotion": "normal",
+    "noise_level": 0,
+    "description": "RHVoice Russian female",
+    "is_builtin": true,
+    "role_pitch": {},
+    "role_rate": {}
+  }
+}
