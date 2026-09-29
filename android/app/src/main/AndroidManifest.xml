@@ -5,6 +5,18 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!--
+        С Android 11 приложение не видит синтезаторы речи без <queries>:
+        TextToSpeech молча возвращает ERROR. Без этого блока озвучка не
+        заработает ни на одном устройстве.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+
     <application
         android:allowBackup="true"
         android:label="ScreenOCR Client"

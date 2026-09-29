@@ -28,6 +28,16 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        // Kotlin 1.9.22 из android/build.gradle.kts требует именно этой версии
+        // compose-компилятора; при смене версии Kotlin правится и она.
+        kotlinCompilerExtensionVersion = "1.5.10"
+    }
 }
 
 // Словари лежат в корне репозитория и в git не дублируются: на этапе сборки
@@ -56,9 +66,17 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    implementation(platform("androidx.compose:compose-bom:2024.02.02"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.activity:activity-ktx:1.8.2")
+    implementation("androidx.activity:activity-compose:1.8.2")
     implementation("com.google.android.material:material:1.11.0")
 
     testImplementation("junit:junit:4.13.2")

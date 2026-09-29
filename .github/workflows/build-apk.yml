@@ -23,11 +23,26 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Debug APK
+      - name: Verify generated dictionaries match Python sources
+        run: |
+          python3 gen_android_dicts.py
+          if ! git diff --quiet -- \
+            android/app/src/main/java/com/screenocr/client/dict/DictData.kt \
+            android/app/src/test/resources/translation_corpus.tsv; then
+            echo "::error::Kotlin-словари разошлись с Python-источниками: запусти python3 gen_android_dicts.py и закоммить результат."
+            git diff --stat
+            exit 1
+          fi
+
+      - name: Run unit tests
         working-directory: android
         run: |
           if [ ! -f gradlew ]; then gradle wrapper --gradle-version 8.6; fi
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Build Debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
