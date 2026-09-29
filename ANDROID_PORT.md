@@ -17,8 +17,11 @@ SAPI5 через PowerShell, `pynput`/`keyboard` для глобальных х�
 около двух часов работы семи параллельных агентов: код существовал только в рабочем дереве.
 План лежит в репозитории, история коммитов — в репозитории.
 
-Проверка на каждом шаге: `./gradlew assembleDebug` плюс `./gradlew testDebugUnitTest`.
-Модуль `android/` собирается (baseline проверен, AGP 8.2.2 / Gradle 8.6 / JDK 17,
+Проверка на каждом шаге — только в CI, локально Gradle не запускаем: коммит в
+`feat/android-native` запускает `.github/workflows/build-apk.yml`, который гоняет
+проверку сгенерированных словарей, `:app:testDebugUnitTest`, `:app:assembleDebug` и
+выкладывает APK артефактом. Зелёный статус прогона — единственный критерий готовности
+подсистемы. Модуль `android/` собирается (AGP 8.2.2 / Gradle 8.6 / JDK 17,
 compileSdk 34, minSdk 23).
 
 ## Что уже есть в android/
