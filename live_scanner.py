@@ -14,6 +14,14 @@ from scanner import ScreenScanner
 
 logger = logging.getLogger(__name__)
 
+# Латиница, визуально похожая на цифры → сами цифры. KOMA часто читает
+# «18» как «l8», «50» как «SO» — без нормализации ключи кадров не
+# совпадают, строки не стабилизируются и live их пропускает.
+_KEY_DIGIT_MAP = str.maketrans({
+    "l": "1", "i": "1", "o": "0", "s": "5", "b": "8",
+    "g": "9", "z": "2", "e": "3",
+})
+
 
 class LiveScanner(ScreenScanner):
     """Сканер реального времени с TTS стримингом и chunk+clear режимом."""
@@ -69,6 +77,18 @@ class LiveScanner(ScreenScanner):
         # Fast frame diff for change detection
         self._prev_frame = None
         self._last_spoken_normalized = ""
+        # История озвученных (ключи БЕЗ пунктуации): OCR нестабилен — один
+        # и тот же кадр распознаётся чуть по-разному (score 0.83-0.90),
+        # сравнение только с последним давало sim<0.8 → повторная озвучка.
+        self._spoken_history = collections.deque(maxlen=80)
+        # Debounce: текст должен повториться 2 кадра подряд, иначе
+        # озвучивались бы фрагменты постепенной печати диалога.
+        self._pending_key = ""
+        self._pending_count = 0
+        # Построчный стриминг: ключи строк прошлого кадра — каждая
+        # строка озвучивается, как только стабилизировалась.
+        self._prev_line_keys = []
+        self._prev_full_key = ""
 
         # Continuous mode: True = непрерывный, False = ручной
         self.continuous_mode = False
@@ -144,13 +164,26 @@ class LiveScanner(ScreenScanner):
     # ==================== SCAN LOOP OVERRIDE ====================
 
     async def _scan_loop(self):
-        """Строгий цикл: скрин → OCR → озвучка (ждать конца) → задержка → следующий скрин."""
+        """Строгий цикл: скрин → OCR → озвучка (ждать конца) → задержка → следующий скрин.
+
+        Соблюдает interval_ms из настроек, чтобы не грузить CPU впустую.
+        """
         logger.info("Запуск цикла сканирования (LiveScanner)")
+        # Сброс эталонного кадра при старте — чистая база для frame diff
+        self._prev_frame = None
+        self._last_spoken_normalized = ""
+        self._pending_key = ""
+        self._pending_count = 0
+        self._prev_line_keys = []
+        self._prev_full_key = ""
+        self._seen_once_keys = []
 
         while self.running:
             if self.paused:
                 await asyncio.sleep(0.1)
                 continue
+
+            t_iter_start = time.time()
 
             try:
                 # Захват экрана
@@ -159,11 +192,10 @@ class LiveScanner(ScreenScanner):
                     await asyncio.sleep(0.1)
                     continue
 
-                # В ручном режиме: пропускаем если скрин не изменился
-                if not self.continuous_mode:
-                    if not self._screenshot_changed(img):
-                        await asyncio.sleep(0.1)
-                        continue
+                # Быстрый пиксель-дифф: если кадр не изменился — OCR не нужен.
+                if not self._screenshot_changed(img):
+                    await asyncio.sleep(0.1)
+                    continue
 
                 # OCR
                 t_scan_start = time.time()
@@ -175,49 +207,147 @@ class LiveScanner(ScreenScanner):
                 if text and text.strip():
                     normalized = ' '.join(text.strip().lower().split())
 
-                    # Punctuation stream mode: accumulate → translate → speak → clear
+                    # Punctuation stream mode
                     if self._punct_mode:
                         if self.on_text_detected:
                             self.on_text_detected(text)
                         self._process_punct_stream(text)
                         self._check_punct_idle()
-                        continue
-
-                    # В непрерывном режиме: всегда показываем текст (для игр с постоянно меняющимся текстом)
-                    if self.continuous_mode:
-                        # Просто показываем и озвучиваем каждый раз
-                        if self.on_text_detected:
-                            self.on_text_detected(text)
-                        try:
-                            if self.tts_engine.is_playing:
-                                self.tts_engine.force_stop()
-                            asyncio.create_task(self.tts_engine.speak(text))
-                        except Exception as e:
-                            logger.error(f"[TTS] Ошибка: {e}")
+                        # В punct-режиме интервал не нужен — ждём триггеров
                     else:
-                        # Дедуп: пропускаем если >80% похоже на прошлое
-                        if self._last_spoken_normalized:
-                            sim = self._similarity(normalized, self._last_spoken_normalized)
-                            if sim > 0.8:
-                                logger.debug(f"[SCAN] Похоже на прошлое (sim={sim:.0%}), пропускаем")
+                        # ══ ПОСТРОЧНЫЙ СТРИМИНГ ══
+                        # Каждая строка озвучивается, как только
+                        # стабилизировалась (похожа на строку прошлого
+                        # кадра), НЕ дожидаясь остальных строк реплики:
+                        # текст может печататься/дополняться по кадрам.
+                        lines = [l.strip() for l in text.split("\n") if l.strip()]
+                        if not lines:
+                            lines = [text.strip()]
+                        cur_keys = []
+                        for l in lines:
+                            k = ' '.join(re.sub(r'[^\w\s]', ' ',
+                                                ' '.join(l.lower().split())).split())
+                            k = k.translate(_KEY_DIGIT_MAP)
+                            cur_keys.append(k)
+                        full_key = ' '.join(k for k in cur_keys if k)
+
+                        # Весь текст стабилен? (переносы строк между
+                        # кадрами у OCR плавают — учитываем и так)
+                        _prev_full_for_diag = self._prev_full_key
+                        _prev_lines_for_diag = list(self._prev_line_keys)
+                        text_stable = (bool(self._prev_full_key) and full_key
+                                       and self._similarity(full_key, self._prev_full_key) > 0.75)
+
+                        matured = []
+                        for key, line in zip(cur_keys, lines):
+                            if not key:
                                 continue
+                            # Уже озвучивалось (в т.ч. обрезанный вариант)?
+                            # Рост (key заметно длиннее озвученного) — НЕ
+                            # повтор: текст дописался, нужно сказать хвост.
+                            done = False
+                            grown_from = None
+                            for sp in self._spoken_history:
+                                if not sp:
+                                    continue
+                                if len(key) > len(sp) * 1.15:
+                                    if (self._similarity(key, sp) > 0.75
+                                            or (len(sp) >= 8 and sp in key)):
+                                        grown_from = sp
+                                    continue
+                                if self._similarity(key, sp) > 0.75:
+                                    done = True
+                                    break
+                                if len(key) >= 15 and key in sp:
+                                    done = True
+                                    break
+                                if (len(sp) >= 15 and sp in key
+                                        and len(sp) * 2 >= len(key)):
+                                    done = True
+                                    break
+                            if done:
+                                continue
+                            # Стабильна, если:
+                            #  - уже была в прошлом кадре (seen), либо
+                            #  - виделась раньше и не озвучивалась (twice) —
+                            #    ВТОРОЕ подтверждение отсекает однокадровый
+                            #    мусор KOMA («рубят пли про малы ваю т»),
+                            #    либо
+                            #  - это дописанный хвост озвученной строки.
+                            # text_stable больше НЕ триггер: при «стабильном»
+                            # полном тексте однокадровые обрывы успевали
+                            # уйти в озвучку (live читало криво).
+                            seen = any(
+                                self._related(key, pk)
+                                for pk in self._prev_line_keys if pk)
+                            twice = any(
+                                self._related(key, sk)
+                                for sk in self._seen_once_keys if sk)
+                            stable = bool(grown_from) or seen or twice
+                            if stable:
+                                if grown_from:
+                                    # Дописанная строка: говорим только хвост,
+                                    # чтобы не повторять уже озвученное
+                                    tail = self._line_tail_after(line, grown_from)
+                                    if tail:
+                                        matured.append((key, tail))
+                                else:
+                                    matured.append((key, line))
 
-                        self._last_spoken_normalized = normalized
+                        # Ключи, которые видели в этом кадре, но НЕ
+                        # озвучили — подтверждение «двух кадров» для
+                        # следующей итерации.
+                        matured_keys = {k for k, _ in matured}
+                        self._seen_once_keys = [
+                            k for k in cur_keys if k and k not in matured_keys]
+                        self._prev_line_keys = [k for k in cur_keys if k]
+                        self._prev_full_key = full_key
 
-                        # Сохраняем в единый лог
-                        self._append_to_log(text, confidence, scan_seconds)
+                        # Временная диагностика: почему не matured?
+                        _sim_full = 0.0
+                        if _prev_full_for_diag:
+                            _sim_full = self._similarity(full_key, _prev_full_for_diag)
+                        _best_line = 0.0
+                        if _prev_lines_for_diag and cur_keys:
+                            _best_line = max(
+                                (self._similarity(k, pk)
+                                 for k in cur_keys if k
+                                 for pk in _prev_lines_for_diag),
+                                default=0.0)
+                        logger.info(
+                            f"[LIVE-DIAG] lines={len(cur_keys)} "
+                            f"matured={len(matured)} "
+                            f"text_stable={text_stable} "
+                            f"sim_full={_sim_full:.2f} "
+                            f"best_line_sim={_best_line:.2f} "
+                            f":: {full_key[:70]}")
 
-                        # GUI callback
+                        # GUI callback — текст показываем КАЖДЫМ кадром (не только при
+                        # matured): иначе поле обновляется с большой
+                        # задержкой («живо активирует голос, но медленно
+                        # получает текст»).
                         if self.on_text_detected:
                             self.on_text_detected(text)
 
-                        # Озвучка — не ждём конца, следующий скрин параллельно
-                        try:
-                            if self.tts_engine.is_playing:
-                                self.tts_engine.force_stop()
-                            asyncio.create_task(self.tts_engine.speak(text))
-                        except Exception as e:
-                            logger.error(f"[TTS] Ошибка: {e}")
+                        if matured:
+                            for key, line in matured:
+                                self._spoken_history.append(key)
+                                self._append_to_log(line, confidence, scan_seconds)
+                            # Озвучка ПОСТРОЧНО, голос персонажа по имени;
+                            # строки идут ПОСЛЕДОВАТЕЛЬНО (одна coroutine),
+                            # иначе create_task на каждую строку — параллельный
+                            # синтез и реплики перебивают друг друга.
+                            speaker = getattr(self.ocr_engine, "last_speaker", None)
+                            asyncio.create_task(
+                                self._speak_lines_sequential(
+                                    [line for _, line in matured], speaker))
+                        else:
+                            logger.debug("[SCAN] Новых стабильных строк нет")
+                            # Экран статичен: дифф не пропустит следующий
+                            # кадр, а стабилизации нужны ВТОРОЕ сравнение.
+                            # Сбрасываем эталон — следующая итерация повторит
+                            # OCR того же кадра и строки смогут созреть.
+                            self._prev_frame = None
 
                 # Индикатор времени сканирования
                 if self.on_scan_timing:
@@ -227,7 +357,81 @@ class LiveScanner(ScreenScanner):
                 logger.error(f"Ошибка в цикле сканирования: {e}")
                 await asyncio.sleep(1)
 
+            # Соблюдаем interval_ms из настроек (по умолчанию 2000мс)
+            elapsed = (time.time() - t_iter_start) * 1000
+            wait_ms = self.interval_ms - elapsed
+            if wait_ms > 0:
+                await asyncio.sleep(wait_ms / 1000.0)
+            # Если OCR занял больше interval_ms — сразу следующая итерация
+
         logger.info("Цикл сканирования остановлен")
+
+    async def _speak_lines_sequential(self, lines, speaker=None):
+        """Озвучивает строки реплики ПОДРЯД: каждая следующая начинается
+        после завершения предыдущей.
+
+        asyncio.Lock сериализует БАТЧИ: matured из разных кадров могли
+        приходить параллельными create_task — два батча перебивали друг
+        друга в одном MCI-плеере (строки одного батча терялись)."""
+        if not lines:
+            return
+        lock = getattr(self, "_speak_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._speak_lock = lock
+        async with lock:
+            total = len(lines)
+            logger.info(f"[LIVE-TTS-QUEUE] старт: {total} строк")
+            for i, line in enumerate(lines, 1):
+                if not self.running:
+                    logger.info(
+                        f"[LIVE-TTS-QUEUE] прервано: {i - 1}/{total}")
+                    break
+                logger.info(f"[LIVE-TTS-QUEUE] {i}/{total}: {line[:90]}")
+                try:
+                    await self.tts_engine.speak(line, speaker=speaker)
+                except Exception as e:
+                    logger.error(f"[TTS] Ошибка: {e}")
+            logger.info(f"[LIVE-TTS-QUEUE] конец: {total} строк")
+
+    def _related(self, a: str, b: str) -> bool:
+        """Две строки — «одна и та же»: высокое сходство ИЛИ одна —
+        продолжение другой (строка дописалась/обрезалась между кадрами).
+
+        Один sim не видит рост: «привет как дела» vs «привет» — 0.66.
+        Превышение длины ограничено ×3, чтобы случайные обрывы
+        не считались продолжением."""
+        if not a or not b:
+            return False
+        short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+        if len(short) >= 5 and short in long_ and len(long_) <= len(short) * 3:
+            return True
+        return self._similarity(a, b) > 0.75
+
+    @staticmethod
+    def _line_tail_after(line: str, spoken_key: str) -> str:
+        """Хвост строки после слов, уже озвученных в spoken_key.
+
+        Текст в игре дописывается (рост строки) — полный повтор говорить
+        нельзя, а терять новые слова нельзя тоже: режем по общему
+        префиксу слов и озвучиваем только то, что появилось."""
+        words = line.split()
+        if not words:
+            return ""
+
+        def norm(w):
+            return re.sub(r"[^\w\s]", "", w).lower()
+
+        sp_words = spoken_key.split()
+        i = 0
+        while i < len(sp_words) and i < len(words):
+            if norm(words[i]) == sp_words[i]:
+                i += 1
+            else:
+                break
+        if i >= len(words):
+            return ""
+        return " ".join(words[i:])
 
     # ==================== OCR LOGGING ====================
 
@@ -600,7 +804,12 @@ class LiveScanner(ScreenScanner):
     # ==================== SCREENSHOT COMPARISON ====================
 
     def _screenshot_changed(self, img) -> bool:
-        """Проверка: изменился ли скриншот (игнорируя курсор мыши)."""
+        """Проверка: изменился ли скриншот (игнорируя курсор мыши).
+
+        Порог diff повышен до 8.0 + гистерезис: обновляем эталон
+        только при значительном изменении, чтобы не ловить дрейф
+        (фейд текста, мигающие элементы UI).
+        """
         import numpy as np
         try:
             # Уменьшаем для быстрого сравнения
@@ -613,14 +822,12 @@ class LiveScanner(ScreenScanner):
 
             # Сравниваем без центральной области (там обычно курсор)
             h, w = arr.shape
-            # Убираем центральные 10% (курсор) и края 5% (артефакты)
             margin_x = max(1, int(w * 0.05))
             margin_y = max(1, int(h * 0.05))
             center_x = w // 2
             center_y = h // 2
             exclude_r = max(1, int(min(w, h) * 0.05))
 
-            # Создаём маску: всё кроме центральной области курсора
             mask = np.ones_like(arr, dtype=bool)
             y_start = max(0, center_y - exclude_r)
             y_end = min(h, center_y + exclude_r)
@@ -628,16 +835,15 @@ class LiveScanner(ScreenScanner):
             x_end = min(w, center_x + exclude_r)
             mask[y_start:y_end, x_start:x_end] = False
 
-            # Сравниваем только по маске
             if mask.any():
                 diff = float(np.mean(np.abs(arr[mask] - self._prev_frame[mask])))
             else:
                 diff = float(np.mean(np.abs(arr - self._prev_frame)))
 
-            self._prev_frame = arr
-
-            # Если разница > 5.0 — скриншот реально изменился (а не просто курсор)
-            if diff > 5.0:
+            # Порог 8.0 (было 5.0) — меньше ложных срабатываний на анимациях UI
+            # Эталон обновляем ТОЛЬКО при значительном изменении
+            if diff > 8.0:
+                self._prev_frame = arr
                 logger.debug(f"[SCREENSHOT] Изменение: diff={diff:.2f}")
                 return True
             return False
@@ -996,6 +1202,14 @@ class LiveScanner(ScreenScanner):
         self._chunk_ready.clear()
         self._spoken_lines.clear()
         self._pending_sentences.clear()
+        # Сброс baseline для frame diff и дедупа при новом старте live
+        self._prev_frame = None
+        self._last_spoken_normalized = ""
+        self._spoken_history.clear()
+        self._pending_key = ""
+        self._pending_count = 0
+        self._prev_line_keys = []
+        self._prev_full_key = ""
         logger.info("LiveScanner кэш полностью очищен")
 
     # ==================== STATUS ====================

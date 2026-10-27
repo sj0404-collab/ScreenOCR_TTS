@@ -28,9 +28,14 @@ def make(text, size=(620, 90)):
 
 def main():
     s = Settings()
+    # ВАЖНО: НЕ используем settings.set() — он сохраняет в config.json.
+    # Тест не имеет права переписывать настройки пользователя (так движок
+    # оставался в файле после прогона). Меняем значение в памяти.
+    s.config.setdefault("ocr", {})["detect_changes"] = True
+    saved_engine = s.config["ocr"].get("engine")
+
     for engine in ("rapidocr", "zen"):
-        s.set("ocr.engine", engine)
-        s.set("ocr.detect_changes", True)
+        s.config["ocr"]["engine"] = engine
         o = OCRWrapper(s)
         try:
             o.set_engine(engine)
@@ -59,7 +64,15 @@ def main():
         print(f"  изменился:{d3:5.2f} c conf={c3} -> {t3[:40]!r}")
         if "Inventory" not in (t3 or ""):
             print("  [ERR] новый кадр не распознан")
+            # восстанавливаем настройку даже при ошибке
+            if saved_engine is not None:
+                s.config["ocr"]["engine"] = saved_engine
             return 1
+
+    # настройки пользователя не должны пострадать
+    if saved_engine is not None:
+        s.config["ocr"]["engine"] = saved_engine
+    print("\n[OK] кэш работает, настройки пользователя не изменены")
     return 0
 
 

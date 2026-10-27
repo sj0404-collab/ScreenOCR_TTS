@@ -124,6 +124,50 @@ _KNOWN_CORRECTIONS = {
     "enler": "Enter", "esc": "Esc", "dei": "Del",
 }
 
+# ═══════════════════════════════════════════════════════════════
+# БОЛЬШОЙ СЛОВАРЬ (ru_250k из yomikai KOMA) — для DP-сегментации
+# ═══════════════════════════════════════════════════════════════
+
+import gzip
+import os
+
+_BIG_WORDS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "models", "koma_ocr", "ru_250k.txt.gz")
+_BIG_WORDS: Optional[Set[str]] = None
+
+
+def _load_big_words() -> Set[str]:
+    """Ленивая загрузка словаря ru_250k (242k слов, ё→е) из KOMA-ассетов.
+
+    Малый _KNOWN_WORDS (~200 слов) спасает только частотные случаи; для
+    CTC-склеиваний KOMA («ЗАДАЧАВЫПОЛНЕНА») нужен полный словарь.
+    """
+    global _BIG_WORDS
+    if _BIG_WORDS is None:
+        words: Set[str] = set()
+        try:
+            if os.path.exists(_BIG_WORDS_PATH):
+                with gzip.open(_BIG_WORDS_PATH, "rt", encoding="utf-8") as f:
+                    for line in f:
+                        w = line.strip().lower().replace("ё", "е")
+                        if w:
+                            words.add(w)
+                logger.info(f"[Cleaner] big dictionary loaded: {len(words)} words")
+            else:
+                logger.debug(f"[Cleaner] big dictionary not found: {_BIG_WORDS_PATH}")
+        except Exception as e:
+            logger.debug(f"[Cleaner] big dict load failed: {e}")
+        _BIG_WORDS = words
+    return _BIG_WORDS
+
+
+def _is_known_word(low: str) -> bool:
+    """Слово в малом _KNOWN_WORDS или в большом ru_250k (нормализация ё)."""
+    if low in _KNOWN_WORDS:
+        return True
+    return low.replace("ё", "е") in _load_big_words()
+
 
 # ═══════════════════════════════════════════════════════════════
 # ОСНОВНЫЕ ФУНКЦИИ
@@ -462,48 +506,64 @@ def restore_known_words(text: str) -> str:
     Динамическое программирование находит оптимальное разбиение
     кириллического текста на известные слова. Вставляет границы
     ТОЛЬКО если ВСЕ фрагменты — известные слова.
+
+    Обрабатывается ПОСТРОЧНО: text.split() + " ".join() здесь раньше
+    съедали все переводы строк — live-сканер получал одну строку,
+    построчный стриминг и сравнение строк между кадрами не работали.
     """
     if not text:
         return text
 
-    words = text.split()
-    result = []
-    for word in words:
-        # Только для слов из подозрительно длинных кириллических блоков
-        if len(word) < 6 or not re.match(r"^[а-яА-ЯёЁ]+$", word):
-            result.append(word)
-            continue
+    out_lines = []
+    for line in text.split("\n"):
+        words = line.split()
+        result = []
+        for word in words:
+            # Только для слов из подозрительно длинных кириллических блоков
+            if len(word) < 6 or not re.match(r"^[а-яА-ЯёЁ]+$", word):
+                result.append(word)
+                continue
 
-        low = word.lower()
-        if low in _KNOWN_WORDS:
-            result.append(word)
-            continue
+            low = word.lower()
+            if _is_known_word(low):
+                result.append(word)
+                continue
 
-        # DP-поиск разбиения на известные слова
-        split = _dp_split_on_known(word.lower())
-        if split and len(split) > 1 and all(s in _KNOWN_WORDS for s in split):
-            # Восстанавливаем регистр
-            restored = []
-            idx = 0
-            for part in split:
-                orig_slice = word[idx:idx + len(part)]
-                # Сохраняем регистр исходного сегмента
-                if orig_slice.isupper():
-                    restored.append(part.upper())
-                elif orig_slice[0].isupper():
-                    restored.append(part.capitalize())
-                else:
-                    restored.append(part)
-                idx += len(part)
-            result.append(" ".join(restored))
-        else:
-            result.append(word)
+            # DP-поиск разбиения на известные слова
+            split = _dp_split_on_known(word.lower())
+            if split and len(split) > 1 and all(_is_known_word(s) for s in split):
+                # Восстанавливаем регистр
+                restored = []
+                idx = 0
+                for part in split:
+                    orig_slice = word[idx:idx + len(part)]
+                    # Сохраняем регистр исходного сегмента
+                    if orig_slice.isupper():
+                        restored.append(part.upper())
+                    elif orig_slice[0].isupper():
+                        restored.append(part.capitalize())
+                    else:
+                        restored.append(part)
+                    idx += len(part)
+                result.append(" ".join(restored))
+            else:
+                result.append(word)
 
-    return " ".join(result)
+        out_lines.append(" ".join(result))
+
+    return "\n".join(out_lines)
 
 
 def _dp_split_on_known(word: str, max_word_len: int = 20) -> Optional[List[str]]:
     """DP-алгоритм: разбивает слово на список известных подслов.
+
+    Минимизирует штраф: 1 за слово + 2 за каждую букву короче 3
+    − 2 за слово из частотного _KNOWN_WORDS. Бонус частотных слов критичен:
+    без него DP не может выбрать между «И ПАЛ ПОД ЛЕЗВИЕМ» (все слова есть
+    в 242k-словаре, но «И» — редкий обрывок по штрафу длины) и мусорным
+    «ИПА ЛП ОД ЛЕЗВИЕМ» («ЛП», «ОД» — настоящие, но редкие слова).
+    Частотный список (и, не, на, под, что, будет…) выступает роль
+    простой языковой модели.
 
     Возвращает None, если разбиение невозможно или все фрагменты
     не являются известными словами.
@@ -514,20 +574,31 @@ def _dp_split_on_known(word: str, max_word_len: int = 20) -> Optional[List[str]]
     if n > 200:
         return None
 
-    # dp[i] = список слов для word[:i] или None если невозможно
-    dp = [None] * (n + 1)
-    dp[0] = []
+    def _cost(piece: str) -> int:
+        # Штраф 2 на букву для фрагментов короче 3 букв; бонус −2 за
+        # частотное слово (проверка по _KNOWN_WORDS без большого словаря).
+        return 1 + max(0, 3 - len(piece)) * 2 - (2 if piece in _KNOWN_WORDS else 0)
+
+    # dp[i] = (штраф, список слов) для word[:i] или None если невозможно
+    dp: List[Optional[Tuple[int, List[str]]]] = [None] * (n + 1)
+    dp[0] = (0, [])
 
     for i in range(1, n + 1):
         for length in range(1, min(max_word_len, i) + 1):
             start = i - length
             candidate = word[start:i]
-            if dp[start] is not None and candidate in _KNOWN_WORDS:
-                new_list = dp[start] + [candidate]
-                if dp[i] is None or len(new_list) < len(dp[i]):
-                    dp[i] = new_list
+            if dp[start] is not None and _is_known_word(candidate):
+                cost, parts = dp[start]
+                new_cost = cost + _cost(candidate)
+                new_list = parts + [candidate]
+                # При равном штрафе побеждает разбиение с меньшим числом
+                # слов (длинный фрагмент): «ЗАДАЧА ВЫПОЛНЕНА» против
+                # «ЗАДАЧА ВЫ ПОЛ НЕНА» (оба штрафа 2, но второе — 4 слова).
+                if (dp[i] is None or new_cost < dp[i][0]
+                        or (new_cost == dp[i][0] and len(new_list) < len(dp[i][1]))):
+                    dp[i] = (new_cost, new_list)
 
-    return dp[n]
+    return dp[n][1] if dp[n] is not None else None
 
 
 def filter_garbage_tokens(text: str) -> str:
@@ -777,7 +848,8 @@ def full_clean_pipeline(text: str, engine_type: str = "tflite_cyrillic") -> str:
     text = join_line_hyphens(text)
 
     # Шаг 4: DP-сегментация (только для кириллицы)
-    if engine_type in ("tflite_cyrillic", "cyrillic_onnx", "easyocr"):
+    # koma_onnx: CTC-декодер KOMA часто склеивает слова — сегментация нужна.
+    if engine_type in ("tflite_cyrillic", "cyrillic_onnx", "easyocr", "koma_onnx"):
         text = restore_known_words(text)
 
     # Шаг 5: Фильтр мусора

@@ -66,6 +66,9 @@ class RegionOverlay(QWidget):
     stop_clicked = pyqtSignal()
     scan_requested = pyqtSignal()
     stt_toggle_requested = pyqtSignal()
+    # Live-сканирование прямо с панели оверлея (рядом с Scan OCR).
+    live_start_requested = pyqtSignal()
+    live_stop_requested = pyqtSignal()
     stt_overlay_toggled = pyqtSignal(bool)  # show/hide STT overlays
     stt_tr_overlay_toggled = pyqtSignal(bool)  # show/hide STT translation overlay
     frame_opacity_changed = pyqtSignal(int)
@@ -208,6 +211,21 @@ class RegionOverlay(QWidget):
         self._btn_stt.clicked.connect(self.stt_toggle_requested.emit)
         btn_row.addWidget(self._btn_stt)
         cl.addLayout(btn_row)
+
+        # ── Live-сканирование: старт и остановка (та же панель) ──
+        btn_row_live = QHBoxLayout()
+        self._btn_live_scan = QPushButton("Live Scan")
+        self._btn_live_scan.setFixedHeight(24)
+        self._btn_live_scan.setStyleSheet(self._ctrl_btn_style())
+        self._btn_live_scan.clicked.connect(self.live_start_requested.emit)
+        btn_row_live.addWidget(self._btn_live_scan)
+
+        self._btn_live_stop = QPushButton("Stop Live")
+        self._btn_live_stop.setFixedHeight(24)
+        self._btn_live_stop.setStyleSheet(self._ctrl_btn_style())
+        self._btn_live_stop.clicked.connect(self.live_stop_requested.emit)
+        btn_row_live.addWidget(self._btn_live_stop)
+        cl.addLayout(btn_row_live)
 
         # Toggle buttons for STT overlays
         btn_row2 = QHBoxLayout()

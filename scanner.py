@@ -288,6 +288,11 @@ class ScreenScanner:
             logger.warning("Сканирование уже запущено")
             return
 
+        # Очистка кэшей при новом запуске (важно для LiveScanner:
+        # сбрасывает _spoken_lines, _last_spoken_normalized, _punct_buffer и др.)
+        if hasattr(self, "clear_cache"):
+            self.clear_cache()
+
         self.running = True
         self.paused = False
 

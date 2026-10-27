@@ -551,6 +551,22 @@ class OCRWrapper:
         # видно в логах как повторные "[TfliteOCR] Initialized" и тормозит.
         self._tflite_engine = None
         self._tflite_lock = threading.Lock()
+        # Кэш KOMA ONNX-движка (PP-OCRv4+v5): сессии ONNX дорогие.
+        self._koma_engine = None
+        self._koma_lock = threading.Lock()
+
+        # Рамки распознанного текста (оверлей как в читалке KOMA/yomikai):
+        # on_boxes(boxes) — вызывается после KOMA-распознавания;
+        # boxes = [(x1,y1,x2,y2 в экранных px, score, text), ...].
+        self.on_boxes = None
+        # Экранный левый-верхний угол последнего захвата (регион или окно) —
+        # для перевода долей bbox KOMA в экранные координаты.
+        # None = источник не с экрана (веб-страница) — рамки не рисуем.
+        self._capture_origin = (0, 0)
+        # Имя говорящего последнего кадра KOMA (как в диалогах Genshin).
+        # GUI добавляет «Имя:» только к ПОКАЗУ текста; TTS получает
+        # чистый текст без имени. Не-KOMA движки сбрасывают в None.
+        self.last_speaker = None
 
         # Онлайн OCR настройки.
         # OrcaRouter удалён (endpoint 404), OpenRouter отклоняет ключ (403).
@@ -750,6 +766,7 @@ class OCRWrapper:
                         "height": self.region["height"],
                     }
                     screenshot = sct.grab(monitor)
+                    self._capture_origin = (self.region["x"], self.region["y"])
                     img = Image.frombytes(
                         "RGB", screenshot.size, screenshot.bgra, "raw", "BGRX"
                     )
@@ -799,6 +816,7 @@ class OCRWrapper:
             with mss.mss() as sct:
                 monitor = {"left": x, "top": y, "width": w, "height": h}
                 screenshot = sct.grab(monitor)
+                self._capture_origin = (x, y)
                 img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
                 return img
         except Exception as e:
@@ -1015,6 +1033,11 @@ class OCRWrapper:
         if not desc:
             return "", 0.0
 
+        if desc.engine_type == EngineType.KOMA_ONNX:
+            return self._recognize_koma_onnx(img)
+
+        # Любой другой движок — имя говорящего от KOMA больше неактуально.
+        self.last_speaker = None
         if desc.engine_type == EngineType.TFLITE_CYRILLIC:
             return self._recognize_tflite_cyrillic(img)
         elif desc.engine_type == EngineType.EASYOCR:
@@ -1022,6 +1045,70 @@ class OCRWrapper:
         elif desc.engine_type == EngineType.GOOGLE_LENS:
             return self._recognize_google_lens(img)
         return "", 0.0
+
+    def _recognize_koma_onnx(self, img: Image.Image) -> tuple:
+        """Распознавание через KOMA ONNX (PP-OCRv4 детектор + CTC PP-OCRv5).
+
+        Движок 1:1 из читалки KOMA (yomikai): BFS-компоненты, ImageNet/BGR
+        нормализация, CTC-жадный декодер, порог 0.25.
+        """
+        try:
+            with self._koma_lock:
+                if self._koma_engine is None:
+                    self._koma_engine = create_engine(
+                        "koma_onnx",
+                        self.settings.__dict__ if hasattr(self.settings, '__dict__') else self.settings)
+                engine = self._koma_engine
+                if engine is None:
+                    return "", 0.0
+                text, conf = engine.recognize(img)
+                # Имя говорящего («Демьян» над репликой) — для префикса
+                # в GUI-поле; на TTS-канал не попадает.
+                self.last_speaker = getattr(engine, "last_speaker", None)
+                # Рамки как в читалке KOMA (yomikai): bbox блоков →
+                # экранные координаты → GUI-оверлей.
+                self._emit_boxes(getattr(engine, "last_regions", None), img)
+            if text:
+                # KOMA не делает пост-обработки (как в оригинале): CTC может
+                # склеить слова. Пайплайн очистки с DP-сегментацией по
+                # словарю ru_250k восстанавливает пробелы.
+                text = full_clean_pipeline(text, engine_type="koma_onnx")
+                text = self._filter_by_language(text)
+            return text, conf
+        except Exception as e:
+            logger.error(f"[OCR] KOMA ONNX error: {e}")
+            return "", 0.0
+
+    def set_capture_origin(self, x, y=None):
+        """Задаёт экранный офсет для последующего recognize(img).
+
+        Вызывается всеми путями, где изображение кроется САМОСТОЯТЕЛЬНО
+        (GUI: _do_scan, _do_scan_region, auto-read fallback), минуя
+        capture_region() — иначе bbox рисуются в локальных координатах
+        кропа (рамки выше/левее реального текста на region.x/region.y).
+        set_capture_origin(None) — «не экран», on_boxes молчит.
+        """
+        self._capture_origin = None if x is None else (x, y)
+
+    def _emit_boxes(self, regions, img: Image.Image):
+        """Переводит доли bbox (KomaRegion) в экранные px и отдаёт on_boxes.
+
+        Пустой прогон ТОЖЕ доходит до оверлея (on_boxes([])): когда текст
+        в игре исчез/сменился, рамки прошлого кадра должны погаснуть
+        сразу, а не висеть «отголоском» до ttl. regions is None —
+        нет данных KOMA (не-движок), не шлём ничего.
+        """
+        if not self.on_boxes or self._capture_origin is None or regions is None:
+            return
+        try:
+            ox, oy = self._capture_origin
+            pw, ph = img.size
+            boxes = [(ox + r.left * pw, oy + r.top * ph,
+                      ox + r.right * pw, oy + r.bottom * ph,
+                      r.confidence, r.text) for r in regions]
+            self.on_boxes(boxes)
+        except Exception as e:
+            logger.debug(f"[OCR] on_boxes: {e}")
 
     def _recognize_tflite_cyrillic(self, img: Image.Image) -> tuple:
         """Распознавание через TFLite Cyrillic (PP-OCRv3+v5).

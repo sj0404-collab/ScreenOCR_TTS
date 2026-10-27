@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 
 class EngineType(str, Enum):
+    KOMA_ONNX = "koma_onnx"
     TFLITE_CYRILLIC = "tflite_cyrillic"
     EASYOCR = "easyocr"
     GOOGLE_LENS = "google_lens"
-    RAPIDOCR = "rapidocr"
     ZEN = "zen"
 
 
@@ -58,11 +58,21 @@ ENGINE_REGISTRY: Dict[str, OcrEngineDescriptor] = {
         description="Google Lens OCR через protobuf API (Glens OCR) — основной движок",
         languages=["ru", "en", "ja", "ko", "zh", "de", "fr", "es"],
     ),
+    EngineType.KOMA_ONNX.value: OcrEngineDescriptor(
+        id=EngineType.KOMA_ONNX.value,
+        name="KOMA ONNX (PP-OCRv4+v5)",
+        engine_type=EngineType.KOMA_ONNX,
+        priority=5,
+        requires_network=False,
+        description="Локальный ONNX из читалки KOMA: PP-OCRv4 детектор + "
+                    "CTC PP-OCRv5 East Slavic, кириллица",
+        languages=["ru", "en"],
+    ),
     EngineType.TFLITE_CYRILLIC.value: OcrEngineDescriptor(
         id=EngineType.TFLITE_CYRILLIC.value,
         name="TFLite Cyrillic",
         engine_type=EngineType.TFLITE_CYRILLIC,
-        priority=10,
+        priority=15,
         requires_network=False,
         description="Локальный TFLite (PP-OCRv3+v5 + детектор v4), оптимизирован для кириллицы",
         languages=["ru", "en"],
@@ -76,16 +86,6 @@ ENGINE_REGISTRY: Dict[str, OcrEngineDescriptor] = {
         requires_gpu=False,
         description="Локальный EasyOCR (многоязычный)",
         languages=["ru", "en", "ja", "ko", "zh"],
-    ),
-    EngineType.RAPIDOCR.value: OcrEngineDescriptor(
-        id=EngineType.RAPIDOCR.value,
-        name="RapidOCR (быстрый)",
-        engine_type=EngineType.RAPIDOCR,
-        priority=5,
-        requires_network=False,
-        description="Локальный RapidOCR на ONNX — самый быстрый: ~0.3 c на кадр. "
-                    "Хорошо для латиницы",
-        languages=["ru", "en"],
     ),
     EngineType.ZEN.value: OcrEngineDescriptor(
         id=EngineType.ZEN.value,
@@ -130,10 +130,16 @@ def _engine_installed(engine_type: "EngineType") -> bool:
         except Exception:
             return False
 
-    if engine_type == EngineType.RAPIDOCR:
-        return have("rapidocr_onnxruntime")
     if engine_type == EngineType.EASYOCR:
         return have("easyocr")
+    if engine_type == EngineType.KOMA_ONNX:
+        if not have("onnxruntime"):
+            return False
+        models = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "models", "koma_ocr")
+        return (os.path.exists(os.path.join(models, "detection.onnx"))
+                and os.path.exists(os.path.join(models, "cyrillic.onnx"))
+                and os.path.exists(os.path.join(models, "cyrillic.txt")))
     if engine_type == EngineType.TFLITE_CYRILLIC:
         # движок умеет работать и на tensorflow.lite, и на tflite_runtime
         if not (have("tensorflow") or have("tflite_runtime")):
@@ -389,14 +395,14 @@ def create_engine(engine_id: str, settings: dict) -> Any:
         logger.error(f"[Engines] Unknown engine: {engine_id}")
         return None
 
-    if descriptor.engine_type == EngineType.TFLITE_CYRILLIC:
+    if descriptor.engine_type == EngineType.KOMA_ONNX:
+        return _create_koma_onnx(settings)
+    elif descriptor.engine_type == EngineType.TFLITE_CYRILLIC:
         return _create_cyrillic_onnx(settings)
     elif descriptor.engine_type == EngineType.EASYOCR:
         return _create_easyocr(settings)
     elif descriptor.engine_type == EngineType.GOOGLE_LENS:
         return _create_google_lens(settings)
-    elif descriptor.engine_type == EngineType.RAPIDOCR:
-        return _create_rapidocr(settings)
     elif descriptor.engine_type == EngineType.ZEN:
         return _create_zen(settings)
     else:
@@ -404,30 +410,20 @@ def create_engine(engine_id: str, settings: dict) -> Any:
         return None
 
 
-def _create_rapidocr(settings: dict):
-    """Создать RapidOCR (локальный, самый быстрый).
-
-    Движок работает в «умном» режиме: на узкой полосе идёт быстрый проход
-    без детектора (~0.3 c), детектор подключается только если результат
-    плохой. Число потоков ограничено, чтобы игра не теряла FPS.
-    """
+def _create_koma_onnx(settings: dict):
+    """Создать KOMA ONNX движок (PP-OCRv4 детектор + CTC PP-OCRv5)."""
     try:
-        from rapid_ocr import RapidOCREngine
-        engine = RapidOCREngine(
-            threads=settings.get("ocr.ocr_threads", 2),
-            limit_side_len=settings.get("ocr.det_limit_side", 480),
-            use_cls=False,
-        )
-        # recognize_auto: быстрый проход с добивкой детектором при необходимости
-        engine.recognize = engine.recognize_auto
-        logger.info("[Engines] RapidOCR initialized (быстрый режим)")
-        return engine
+        from koma_ocr import KomaOnnxOCR
+        engine = KomaOnnxOCR()
+        if engine.initialize():
+            logger.info("[Engines] KOMA ONNX (PP-OCRv4+v5) initialized")
+            return engine
+        logger.warning("[Engines] KOMA ONNX init failed")
     except ImportError:
-        logger.error("[Engines] rapidocr_onnxruntime not installed")
-        return None
+        logger.error("[Engines] koma_ocr.py not found")
     except Exception as e:
-        logger.error(f"[Engines] RapidOCR error: {e}")
-        return None
+        logger.error(f"[Engines] KOMA ONNX error: {e}")
+    return None
 
 
 def _create_zen(settings: dict):
@@ -447,15 +443,10 @@ def _create_zen(settings: dict):
 
 
 def _create_cyrillic_onnx(settings: dict):
-    """Создать CyrillicONNX движок.
+    """Создать CyrillicONNX движок (TFLite, PP-OCRv3+v5, кириллица).
 
-    Приоритет:
-    1. TFLite с кириллическими моделями PP-OCRv3+v5 (из yomihon-custom)
-    2. RapidOCR (PaddleOCR ONNX) с пост-обработкой из ocr_text_cleaner
-
-    Оба варианта используют одинаковый пайплайн пост-обработки.
+    Использует пайплайн пост-обработки из ocr_text_cleaner.
     """
-    # Попытка 1: TFLite движок (из yomihon-custom)
     try:
         from tflite_ocr import CyrillicTfliteOCR
         engine = CyrillicTfliteOCR()
@@ -463,25 +454,11 @@ def _create_cyrillic_onnx(settings: dict):
             logger.info("[Engines] TFLite Cyrillic (PP-OCRv3+v5) initialized")
             return engine
         else:
-            logger.warning("[Engines] TFLite init failed, trying RapidOCR")
+            logger.warning("[Engines] TFLite init failed")
     except ImportError:
-        logger.info("[Engines] TFLite not available, trying RapidOCR")
+        logger.error("[Engines] TFLite not available")
     except Exception as e:
-        logger.warning(f"[Engines] TFLite error: {e}, trying RapidOCR")
-
-    # Попытка 2: RapidOCR (PaddleOCR ONNX)
-    try:
-        from rapid_ocr import RapidOCREngine
-        engine = RapidOCREngine(lang="ru")
-        if engine.initialize():
-            logger.info("[Engines] TFLite Cyrillic (RapidOCR fallback) initialized")
-            return engine
-        else:
-            logger.warning("[Engines] RapidOCR init failed")
-    except ImportError:
-        logger.error("[Engines] Neither TFLite nor RapidOCR available")
-    except Exception as e:
-        logger.error(f"[Engines] RapidOCR error: {e}")
+        logger.error(f"[Engines] TFLite error: {e}")
 
     return None
 

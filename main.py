@@ -89,6 +89,17 @@ def main():
     setup_logging()
     logger = logging.getLogger(__name__)
 
+    # C-краши (Access Violation в onnxruntime и т.п.) не попадают в
+    # excepthook — ловим трассировкой в crash.log, иначе pythonw
+    # умирает молча без единой записи.
+    try:
+        _crash_f = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "crash.log"), "a", encoding="utf-8")
+        faulthandler.enable(file=_crash_f, all_threads=True)
+        logger.info("faulthandler enabled → crash.log")
+    except Exception as _e:
+        logger.warning(f"faulthandler not enabled: {_e}")
+
     def _excepthook(exc_type, exc_value, exc_tb):
         import traceback
         logger.error("Unhandled:", exc_info=(exc_type, exc_value, exc_tb))

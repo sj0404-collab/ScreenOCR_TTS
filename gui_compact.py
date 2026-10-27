@@ -118,14 +118,44 @@ class CompactWindow(QMainWindow):
         self.btn_scan.clicked.connect(self._on_scan)
         top_layout.addWidget(self.btn_scan)
 
+        # Auto Speak: озвучивать результат сразу после Scan / Live
+        self.auto_speak = QCheckBox("🔊 Auto Speak")
+        self.auto_speak.setChecked(self.settings.get("ocr.auto_speak", True))
+        self.auto_speak.setToolTip("Автоматически озвучивать распознанный текст после сканирования")
+        self.auto_speak.stateChanged.connect(lambda s: self.settings.set("ocr.auto_speak", bool(s)))
+        top_layout.addWidget(self.auto_speak)
+
         self.btn_live = QPushButton(f"{ICON['live_on']} Live")
         self.btn_live.setFixedHeight(28)
         self.btn_live.setCheckable(True)
         self.btn_live.clicked.connect(self._on_live_toggle)
         top_layout.addWidget(self.btn_live)
 
+        # Рамки вокруг распознанного текста поверх экрана (как в читалке
+        # KOMA/yomikai). Включено по умолчанию; рамки гаснут сами через
+        # несколько секунд без новых прогонов.
+        self.btn_boxes = QPushButton("▢ Рамки")
+        self.btn_boxes.setFixedHeight(28)
+        self.btn_boxes.setCheckable(True)
+        self.btn_boxes.setChecked(self.settings.get("ocr.show_boxes", True))
+        self.btn_boxes.setToolTip(
+            "Рамки вокруг распознанного текста поверх экрана "
+            "(как в читалке KOMA / yomikai)")
+        self.btn_boxes.clicked.connect(self._toggle_boxes_overlay)
+        top_layout.addWidget(self.btn_boxes)
+
         # ── Auto-Read: реальное время — скан + сразу озвучка ──
         self._auto_read_active = False
+        self._auto_read_last_text = ""
+        # Debounce: текст должен повториться 2 скана подряд (печать диалога)
+        self._auto_read_pending = ""
+        self._auto_read_pending_count = 0
+        # Защита от накопления OCR-потоков: скан занимает 1.5-4 c, а таймер
+        # может бить каждые 500 мс. Без этих полей запускалось бы 3-8
+        # параллельных распознаваний — интерфейс «зависал», CPU грузился.
+        self._auto_read_busy = False
+        self._auto_read_last = 0.0
+        self._auto_read_gap = 1.0      # минимальная пауза между сканами, c
         self._auto_read_timer = QTimer()
         self._auto_read_timer.timeout.connect(self._auto_read_tick)
 
@@ -185,120 +215,86 @@ class CompactWindow(QMainWindow):
         splitter.setHandleWidth(4)
 
         # ── LEFT PANEL: Controls ──
+        # Раньше здесь было 7 мелких групп (Process/Region/Scan/Voice/
+        # OCR/Overlay). При 1366x768 они не влезали по высоте, нижние
+        # уезжали под экран, а из-за сжатия панели splitter'ом подписи
+        # обрезались ("Elena (RH", "Cop", "Clea", "Occal").
+        # Теперь — 4 компактных блока, ширина защищена минимумом.
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        left_scroll.setMaximumWidth(320)
+        # Минимальная ширина: иначе splitter сжимает панель и текст режется.
+        left_scroll.setMinimumWidth(340)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(4, 4, 4, 4)
-        left_layout.setSpacing(4)
+        left_layout.setSpacing(6)
 
-        # Target Process
-        grp_proc = QGroupBox(f"{ICON['process']} Process")
-        proc_layout = QHBoxLayout(grp_proc)
-        proc_layout.setSpacing(4)
+        # ── 1. Область: игра + зелёная рамка ──
+        grp_region = QGroupBox(f"{ICON['region']} Область")
+        region_layout = QVBoxLayout(grp_region)
+        region_layout.setSpacing(3)
+
+        proc_row = QHBoxLayout()
+        proc_row.setSpacing(4)
+        proc_row.addWidget(QLabel(f"{ICON['process']} Игра:"))
         self.proc_label = QLabel("Auto")
         self.proc_label.setStyleSheet("color: #969696;")
-        proc_layout.addWidget(self.proc_label, 1)
+        self.proc_label.setToolTip("Процесс, из которого берётся кадр")
+        proc_row.addWidget(self.proc_label, 1)
         btn_proc = QPushButton(f"{ICON['edit']}...")
-        btn_proc.setFixedWidth(40)
+        btn_proc.setFixedWidth(34)
+        btn_proc.setToolTip("Выбрать процесс игры вручную")
         btn_proc.clicked.connect(self._select_process)
-        proc_layout.addWidget(btn_proc)
-        left_layout.addWidget(grp_proc)
+        proc_row.addWidget(btn_proc)
+        region_layout.addLayout(proc_row)
 
-        # OCR Region
-        grp_region = QGroupBox(f"{ICON['region']} Region")
-        region_layout = QVBoxLayout(grp_region)
-        region_layout.setSpacing(2)
         self.region_list = QListWidget()
-        self.region_list.setMaximumHeight(80)
+        self.region_list.setMaximumHeight(70)
+        self.region_list.setToolTip("Зелёные рамки: кадр для OCR берётся отсюда")
         region_layout.addWidget(self.region_list)
+
         btn_row = QHBoxLayout()
-        for icon, text, handler in [
-            (ICON['add'], "Add", self._add_region),
-            (ICON['edit'], "Edit", self._edit_region),
-            (ICON['delete'], "Del", self._delete_region),
+        for icon, text, handler, tip in [
+            (ICON['add'], "Add", self._add_region, "Добавить область"),
+            (ICON['edit'], "Edit", self._edit_region, "Изменить область"),
+            (ICON['delete'], "Del", self._delete_region, "Удалить область"),
         ]:
             b = QPushButton(f"{icon} {text}")
             b.setFixedHeight(24)
+            b.setToolTip(tip)
             b.clicked.connect(handler)
             btn_row.addWidget(b)
         region_layout.addLayout(btn_row)
         left_layout.addWidget(grp_region)
 
-        # Scan Settings
-        grp_scan = QGroupBox(f"{ICON['scan']} Scan")
+        # ── 2. Распознавание: Scan + OCR в одном блоке ──
+        grp_scan = QGroupBox(f"{ICON['scan']} Распознавание")
         scan_layout = QGridLayout(grp_scan)
-        scan_layout.setSpacing(2)
+        scan_layout.setHorizontalSpacing(4)
+        scan_layout.setVerticalSpacing(3)
 
-        scan_layout.addWidget(QLabel("Mode:"), 0, 0)
+        scan_layout.addWidget(QLabel("Режим:"), 0, 0)
         self.scan_mode = QComboBox()
         self.scan_mode.addItems(["OCR", "STT", "Both"])
-        self.scan_mode.setFixedWidth(100)
+        self.scan_mode.setToolTip("Что делает Scan / Live: текст с экрана, речь, или оба")
         scan_layout.addWidget(self.scan_mode, 0, 1)
 
-        scan_layout.addWidget(QLabel("Interval:"), 1, 0)
+        scan_layout.addWidget(QLabel("Пауза:"), 0, 2)
         self.interval = QSpinBox()
         self.interval.setRange(100, 5000)
         self.interval.setValue(400)
         self.interval.setSuffix(" ms")
-        self.interval.setFixedWidth(100)
-        scan_layout.addWidget(self.interval, 1, 1)
+        self.interval.setToolTip("Пауза между сканами: больше = меньше нагрузка на FPS")
+        scan_layout.addWidget(self.interval, 0, 3)
 
-        self.auto_translate = QCheckBox(f"{ICON['auto']} Auto TR EN→RU")
-        self.auto_translate.setChecked(True)
-        scan_layout.addWidget(self.auto_translate, 2, 0, 1, 2)
-
-        left_layout.addWidget(grp_scan)
-
-        # Voice Settings
-        grp_voice = QGroupBox(f"{ICON['voice']} Voice")
-        voice_layout = QGridLayout(grp_voice)
-        voice_layout.setSpacing(2)
-
-        voice_layout.addWidget(QLabel("Engine:"), 0, 0)
-        self.tts_engine_combo = QComboBox()
-        self.tts_engine_combo.setFixedWidth(180)
-        voice_layout.addWidget(self.tts_engine_combo, 0, 1)
-
-        voice_layout.addWidget(QLabel("Voice:"), 1, 0)
-        self.voice_combo = QComboBox()
-        self.voice_combo.setFixedWidth(180)
-        voice_layout.addWidget(self.voice_combo, 1, 1)
-
-        voice_layout.addWidget(QLabel(f"{ICON['speed']} Speed:"), 2, 0)
-        self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setRange(-50, 50)
-        self.speed_slider.setValue(15)
-        voice_layout.addWidget(self.speed_slider, 2, 1)
-        self.speed_label = QLabel("15")
-        self.speed_slider.valueChanged.connect(lambda v: self.speed_label.setText(str(v)))
-        voice_layout.addWidget(self.speed_label, 2, 2)
-
-        voice_layout.addWidget(QLabel(f"{ICON['pitch']} Pitch:"), 3, 0)
-        self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
-        self.pitch_slider.setRange(-50, 50)
-        self.pitch_slider.setValue(0)
-        voice_layout.addWidget(self.pitch_slider, 3, 1)
-        self.pitch_label = QLabel("0")
-        self.pitch_slider.valueChanged.connect(lambda v: self.pitch_label.setText(str(v)))
-        voice_layout.addWidget(self.pitch_label, 3, 2)
-
-        left_layout.addWidget(grp_voice)
-
-        # OCR Settings
-        grp_ocr = QGroupBox(f"{ICON['eng']} OCR")
-        ocr_layout = QGridLayout(grp_ocr)
-        ocr_layout.setSpacing(2)
-
-        ocr_layout.addWidget(QLabel("Lang:"), 0, 0)
+        scan_layout.addWidget(QLabel("Язык:"), 1, 0)
         self.lang_combo = QComboBox()
         self.lang_combo.addItems(["eng", "rus+eng", "ru", "jpn"])
-        ocr_layout.addWidget(self.lang_combo, 0, 1)
+        self.lang_combo.setToolTip("Язык текста в кадре")
+        scan_layout.addWidget(self.lang_combo, 1, 1, 1, 3)
 
-        ocr_layout.addWidget(QLabel("Engine:"), 1, 0)
-        self.engine_combo = QComboBox()
+        scan_layout.addWidget(QLabel("Движок:"), 2, 0)
         # Только реально установленные движки: раньше в списке были
         # Tesseract (нет в движках) и EasyOCR (пакет не установлен) —
         # выбор заведомо нерабочих вариантов.
@@ -309,8 +305,8 @@ class CompactWindow(QMainWindow):
                 self._engine_id_map["Google Lens"] = "google_lens"
             elif _d.engine_type.value == "zen":
                 self._engine_id_map["Zen (space-bunny-free)"] = "zen"
-            elif _d.engine_type.value == "rapidocr":
-                self._engine_id_map["RapidOCR (быстрый)"] = "rapidocr"
+            elif _d.engine_type.value == "koma_onnx":
+                self._engine_id_map["KOMA ONNX (PP-OCRv4+v5)"] = "koma_onnx"
             elif _d.engine_type.value == "tflite_cyrillic":
                 self._engine_id_map["TFLite Cyrillic"] = "tflite_cyrillic"
             elif _d.engine_type.value == "easyocr":
@@ -318,23 +314,88 @@ class CompactWindow(QMainWindow):
         if not self._engine_id_map:
             self._engine_id_map = {"Google Lens": "google_lens"}
         self._engine_name_map = {v: k for k, v in self._engine_id_map.items()}
+        self.engine_combo = QComboBox()
         self.engine_combo.addItems(list(self._engine_id_map.keys()))
-        ocr_layout.addWidget(self.engine_combo, 1, 1)
+        self.engine_combo.setToolTip(
+            "KOMA ONNX — локальный, PP-OCRv4+v5 (кириллица)\n"
+            "Zen — лучшая точность, нужен интернет\n"
+            "Google Lens — требует API-ключ"
+        )
+        scan_layout.addWidget(self.engine_combo, 2, 1, 1, 3)
 
-        left_layout.addWidget(grp_ocr)
+        self.auto_translate = QCheckBox(f"{ICON['auto']} Автоперевод")
+        self.auto_translate.setChecked(True)
+        self.auto_translate.setToolTip("Переводить распознанный текст сразу на русский")
+        scan_layout.addWidget(self.auto_translate, 3, 0, 1, 4)
 
-        # Overlay Toggle
-        grp_ovl = QGroupBox(f"{ICON['overlay']} Overlay")
+        left_layout.addWidget(grp_scan)
+
+        # ── 3. Голос ──
+        grp_voice = QGroupBox(f"{ICON['voice']} Голос")
+        voice_layout = QGridLayout(grp_voice)
+        voice_layout.setHorizontalSpacing(4)
+        voice_layout.setVerticalSpacing(3)
+
+        voice_layout.addWidget(QLabel("Движок:"), 0, 0)
+        self.tts_engine_combo = QComboBox()
+        self.tts_engine_combo.setToolTip("Синтез речи")
+        voice_layout.addWidget(self.tts_engine_combo, 0, 1, 1, 2)
+
+        voice_layout.addWidget(QLabel("Голос:"), 1, 0)
+        self.voice_combo = QComboBox()
+        self.voice_combo.setToolTip("Голос для озвучки перевода")
+        voice_layout.addWidget(self.voice_combo, 1, 1, 1, 2)
+
+        voice_layout.addWidget(QLabel(f"{ICON['speed']} Скор."), 2, 0)
+        self.speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.speed_slider.setRange(-50, 50)
+        self.speed_slider.setValue(15)
+        self.speed_slider.setToolTip("Скорость речи")
+        voice_layout.addWidget(self.speed_slider, 2, 1)
+        self.speed_label = QLabel("15")
+        self.speed_slider.valueChanged.connect(lambda v: self.speed_label.setText(str(v)))
+        voice_layout.addWidget(self.speed_label, 2, 2)
+
+        voice_layout.addWidget(QLabel(f"{ICON['pitch']} Тон:"), 3, 0)
+        self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
+        self.pitch_slider.setRange(-50, 50)
+        self.pitch_slider.setValue(0)
+        self.pitch_slider.setToolTip("Высота тона")
+        voice_layout.addWidget(self.pitch_slider, 3, 1)
+        self.pitch_label = QLabel("0")
+        self.pitch_slider.valueChanged.connect(lambda v: self.pitch_label.setText(str(v)))
+        voice_layout.addWidget(self.pitch_label, 3, 2)
+
+        # ── Голос персонажа: кто говорит сейчас (из OCR) + его голос ──
+        self._person_speaker = None
+        self.person_label = QLabel("Персонаж: —")
+        self.person_label.setToolTip("Кто говорит сейчас (имя из OCR)")
+        voice_layout.addWidget(self.person_label, 4, 0, 1, 3)
+        self.person_voice_combo = QComboBox()
+        self.person_voice_combo.setToolTip(
+            "Голос этого персонажа. «Основной голос» — как в настройках. "
+            "Для неизвестных имён (псевдонимы, латиница) всегда основной голос.")
+        voice_layout.addWidget(self.person_voice_combo, 5, 0, 1, 3)
+        self.person_voice_combo.currentIndexChanged.connect(self._on_person_voice_changed)
+
+        left_layout.addWidget(grp_voice)
+
+        # ── 4. Вывод: оверлеи + STT ──
+        grp_ovl = QGroupBox(f"{ICON['overlay']} Вывод")
         ovl_layout = QVBoxLayout(grp_ovl)
-        ovl_layout.setSpacing(2)
+        ovl_layout.setSpacing(3)
+
         # All overlays hidden by default; only the green region frame shows.
-        self.ovl_ocr = QPushButton(f"{ICON['ok']} OCR Text")
+        ovl_row = QHBoxLayout()
+        self.ovl_ocr = QPushButton(f"{ICON['ok']} Текст OCR")
         self.ovl_ocr.setCheckable(True)
-        self.ovl_ocr.setChecked(False)
-        ovl_layout.addWidget(self.ovl_ocr)
-        self.ovl_stt = QPushButton(f"{ICON['ok']} STT Text")
+        self.ovl_ocr.setToolTip("Показывать распознанный текст поверх окна игры")
+        self.ovl_stt = QPushButton(f"{ICON['ok']} Текст речи")
         self.ovl_stt.setCheckable(True)
-        ovl_layout.addWidget(self.ovl_stt)
+        self.ovl_stt.setToolTip("Показывать распознанную речь поверх окна игры")
+        ovl_row.addWidget(self.ovl_ocr)
+        ovl_row.addWidget(self.ovl_stt)
+        ovl_layout.addLayout(ovl_row)
         left_layout.addWidget(grp_ovl)
 
         # STT Button (checkable active/passive toggle)
@@ -342,6 +403,7 @@ class CompactWindow(QMainWindow):
         self.btn_stt.setFixedHeight(32)
         self.btn_stt.setCheckable(True)
         self.btn_stt.setChecked(False)
+        self.btn_stt.setToolTip("Распознавать речь из системного звука (Ctrl+Shift+F7)")
         self.btn_stt.toggled.connect(self._toggle_stt)
         left_layout.addWidget(self.btn_stt)
 
@@ -357,8 +419,10 @@ class CompactWindow(QMainWindow):
 
         # Screenshot Preview
         grp_preview = QGroupBox("Screenshot")
+        # ── Preview: рамка + превью кадра ──
+        grp_preview = QGroupBox("Превью области")
         preview_layout = QVBoxLayout(grp_preview)
-        self.preview_label = QLabel("No screenshot")
+        self.preview_label = QLabel("Нет кадра")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumHeight(60)
         self.preview_label.setMaximumHeight(120)
@@ -366,23 +430,29 @@ class CompactWindow(QMainWindow):
         preview_layout.addWidget(self.preview_label)
         right_layout.addWidget(grp_preview)
 
-        # Keyboard Sim
+        # ── Клавиатура-симулятор ──
+        # Раньше была всегда включена и постоянно занимала ~60 px.
+        # Это чисто визуальный эффект «печати» текста, поэтому по
+        # умолчанию выключена, а сам виджет появляется только по флажку.
         from keyboard_widget import KeyboardWidget
         kb_row = QHBoxLayout()
-        self.kb_check = QCheckBox(f"{ICON['settings']} Keyboard")
-        self.kb_check.setChecked(True)
+        self.kb_check = QCheckBox(f"{ICON['settings']} Показывать набор текста")
+        self.kb_check.setChecked(False)
+        self.kb_check.setToolTip("Анимировать набор распознанного текста (для отладки OCR)")
         kb_row.addWidget(self.kb_check)
+        kb_row.addStretch()
         self.kb_widget = KeyboardWidget()
         self.kb_widget.setMaximumHeight(60)
+        self.kb_widget.hide()
+        self.kb_check.toggled.connect(lambda on: self.kb_widget.setVisible(bool(on)))
         kb_row.addWidget(self.kb_widget)
-        kb_row.addStretch()
         right_layout.addLayout(kb_row)
 
         # Original + Translation (side by side)
         text_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Original
-        grp_orig = QGroupBox("Original (OCR)")
+        grp_orig = QGroupBox("Оригинал (OCR)")
         orig_layout = QVBoxLayout(grp_orig)
         self.result_text = QTextEdit()
         self.result_text.setPlaceholderText("OCR text...")
@@ -403,7 +473,7 @@ class CompactWindow(QMainWindow):
         text_splitter.addWidget(grp_orig)
 
         # Translation
-        grp_tr = QGroupBox("Translation (EN→RU)")
+        grp_tr = QGroupBox("Перевод")
         tr_layout = QVBoxLayout(grp_tr)
         self.translate_text = QTextEdit()
         self.translate_text.setPlaceholderText("Translation...")
@@ -428,7 +498,7 @@ class CompactWindow(QMainWindow):
         right_layout.addWidget(text_splitter, 1)
 
         # STT Text
-        grp_stt = QGroupBox(f"{ICON['stt']} STT Voice")
+        grp_stt = QGroupBox(f"{ICON['stt']} Речь (STT)")
         stt_layout = QVBoxLayout(grp_stt)
         self.stt_text = QTextEdit()
         self.stt_text.setPlaceholderText("STT results...")
@@ -438,7 +508,8 @@ class CompactWindow(QMainWindow):
         right_layout.addWidget(grp_stt)
 
         splitter.addWidget(right_widget)
-        splitter.setSizes([300, 500])
+        # 350 = минимум левой панели, иначе подписи снова обрежутся
+        splitter.setSizes([350, 620])
 
         # ═══════════════════════════════════════════════
         # TABS: Main | Browser
@@ -699,6 +770,8 @@ class CompactWindow(QMainWindow):
             self._gui(lambda: self.status_label.setText("OCR processing..."))
             import time
             t0 = time.perf_counter()
+            # Веб-контент — не экран: рамки KOMA поверх игры не рисуем.
+            self.ocr.set_capture_origin(None)
             result = self.ocr.recognize(img)
             elapsed = time.perf_counter() - t0
             text = result[0] if isinstance(result, tuple) else str(result)
@@ -745,15 +818,23 @@ class CompactWindow(QMainWindow):
     def _init_ocr(self):
         from ocr_wrapper import OCRWrapper
         self.ocr = OCRWrapper(self.settings)
-        engine = self.settings.get("ocr.engine", "google_lens")
+        self._wire_ocr_hooks()
+        engine = self.settings.get("ocr.engine", "")
+        # Сохранённый движок мог быть удалён/недоступен — тогда берём
+        # лучший реально установленный (предпочтение локальному TFLite).
+        if engine == "cyrillic_onnx":
+            engine = "tflite_cyrillic"
+        if engine not in self._engine_id_map.values():
+            engine = ("tflite_cyrillic"
+                      if "tflite_cyrillic" in self._engine_id_map.values()
+                      else next(iter(self._engine_id_map.values())))
+            self.settings.set("ocr.engine", engine)
         logger.info(f"[OCR] Engine: {engine}")
-        # Sync engine combo with active engine (default: Google Lens)
+        # Sync engine combo with active engine
         try:
-            if engine == "cyrillic_onnx":
-                engine = "tflite_cyrillic"
             self.engine_combo.blockSignals(True)
             self.engine_combo.setCurrentText(
-                self._engine_name_map.get(engine, "Google Lens"))
+                self._engine_name_map.get(engine, next(iter(self._engine_id_map))))
             self.engine_combo.blockSignals(False)
         except Exception:
             pass
@@ -762,13 +843,43 @@ class CompactWindow(QMainWindow):
         except Exception:
             pass
         self.engine_combo.currentTextChanged.connect(self._on_engine_changed)
+        self._schedule_ocr_warmup()
+
+    def _schedule_ocr_warmup(self):
+        """Прогреть OCR-модели в фоне, чтобы первый Scan не ждал ~13 c.
+
+        ONNX Runtime инициализирует модели лениво: без прогрева первый
+        клик «Scan» упирается в 13 c ожидания. Прогрев делаем отдельным
+        потоком — GUI при этом полностью отзывчив.
+        """
+        def _warm():
+            try:
+                # KOMA ONNX: заранее создаём сессии (детектор+распознаватель),
+                # иначе первый Scan ждёт загрузку ~2-4 c.
+                if getattr(self.ocr, "engine_type", "") == "koma_onnx":
+                    from ocr_engines import create_engine
+                    eng = create_engine("koma_onnx", self.settings)
+                    if eng is not None:
+                        self.ocr._koma_engine = eng
+                        logger.info("[OCR] KOMA ONNX warmed up")
+                        return
+                eng = getattr(self.ocr, "rapidocr_engine", None)
+                if eng is None:
+                    eng = getattr(self.ocr, "rapid", None)
+                if eng is not None and hasattr(eng, "warmup"):
+                    eng.warmup()
+            except Exception as e:
+                logger.debug(f"[OCR] warmup error: {e}")
+        threading.Thread(target=_warm, name="ocr-warmup", daemon=True).start()
 
     def _on_engine_changed(self, name):
-        engine_id = self._engine_id_map.get(name, "google_lens")
+        engine_id = (self._engine_id_map.get(name)
+                     or next(iter(self._engine_id_map.values())))
         self.settings.set("ocr.engine", engine_id)
         try:
             from ocr_wrapper import OCRWrapper
             self.ocr = OCRWrapper(self.settings)
+            self._wire_ocr_hooks()
             if hasattr(self, "scanner") and self.scanner is not None:
                 try:
                     self.scanner.ocr_engine = self.ocr
@@ -788,13 +899,22 @@ class CompactWindow(QMainWindow):
     def _init_scanner(self):
         from live_scanner import LiveScanner
         self.scanner = LiveScanner(self.ocr, self.settings, self.tts)
-        self.scanner.on_text_detected = self._on_text_detected
+        # Callback придёт из asyncio-потока сканера — маршалим в главный
+        # поток Qt через сигнал gui_invoke (иначе работа с виджетами
+        # из фонового потока = undefined behavior).
+        self.scanner.on_text_detected = lambda text: self._gui(
+            lambda t=text: self._on_text_detected(t))
         self.scanner.on_screenshot = lambda img: self._gui(lambda: self._show_preview(img))
 
         # Region overlay (green frame)
         from region_overlay import RegionOverlay
         self.region_overlay = RegionOverlay(settings=self.settings, config_key="overlay")
         self.region_overlay.scan_requested.connect(self._on_scan)
+        # Кнопки Live на панели оверлея — те же действия, что в трее/панели:
+        # запуск непрерывного сканирования и его остановка.
+        self.region_overlay.live_start_requested.connect(
+            lambda: self._on_live_toggle(True))
+        self.region_overlay.live_stop_requested.connect(self._on_stop_live)
         self.region_overlay.region_moved.connect(self._on_region_moved)
         self.region_overlay.region_deleted.connect(self._on_region_deleted)
         self.region_overlay.region_right_clicked.connect(self._show_region_context_menu)
@@ -802,6 +922,9 @@ class CompactWindow(QMainWindow):
         self.region_overlay.set_regions(self.regions)
         if self.regions:
             self.region_overlay.show_overlay()
+            # Первый запуск: regions[0] → ocr.region (и в settings),
+            # иначе live схватит весь экран с мусором по краям.
+            self._sync_ocr_region()
         logger.info(f"[Scanner] Initialized with overlay, {len(self.regions)} regions")
 
     def _load_regions(self):
@@ -819,6 +942,21 @@ class CompactWindow(QMainWindow):
                 json.dump(self.regions, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Error saving regions: {e}")
+        self._sync_ocr_region()
+
+    def _sync_ocr_region(self):
+        """Держим ocr.region равным regions[0]: live-захват и auto-read идут
+        из ocr.capture_region() — без этого live сканирует ВЕСЬ экран и в
+        реплику лезет мусор по краям (кнопка «АВТО», «UID: …» и т.п.).
+        Кнопочный Scan и так берёт regions[0] — приводим все режимы
+        к одному источнику истины."""
+        if getattr(self, "ocr", None) is None or not self.regions:
+            return
+        r = self.regions[0]
+        try:
+            self.ocr.set_region(r["x"], r["y"], r["width"], r["height"])
+        except Exception as e:
+            logger.debug(f"[Region] sync ocr.region: {e}")
 
     def _on_region_moved(self, idx, x, y, w, h):
         if idx < len(self.regions):
@@ -852,7 +990,20 @@ class CompactWindow(QMainWindow):
         lock_action = menu.addAction(lock_text)
         menu.addSeparator()
         scan_action = menu.addAction("Scan this region")
-        action = menu.exec(QCursor.pos())
+        live_start_action = menu.addAction("Live Scan")
+        live_stop_action = menu.addAction("Stop Live")
+
+        # Live-скан молча захватывает открытые пункты меню (текст меню
+        # попадает в «реплику») — на время меню ставим сканер на паузу.
+        scanner = getattr(self, "scanner", None)
+        if scanner is not None:
+            scanner.pause()
+        try:
+            action = menu.exec(QCursor.pos())
+        finally:
+            if scanner is not None:
+                scanner.resume()
+
         if action == edit_action:
             self._edit_region_by_idx(index)
         elif action == delete_action:
@@ -863,6 +1014,10 @@ class CompactWindow(QMainWindow):
             self.region_overlay.set_regions(self.regions)
         elif action == scan_action:
             self._scan_region(region)
+        elif action == live_start_action:
+            self._on_live_toggle(True)
+        elif action == live_stop_action:
+            self._on_stop_live()
 
     def _scan_region(self, region):
         if not self.ocr:
@@ -887,6 +1042,9 @@ class CompactWindow(QMainWindow):
             self._gui(lambda: self._show_preview(self._pending_preview))
             self._gui(lambda: self.status_label.setText("OCR processing..."))
             t0 = time.perf_counter()
+            # Регион кроем сами — сообщаем офсет, иначе рамки KOMA
+            # рисуются в локальных координатах кропа (выше/левее текста).
+            self.ocr.set_capture_origin(x, y)
             result = self.ocr.recognize(img)
             elapsed = time.perf_counter() - t0
             text = result[0] if isinstance(result, tuple) else str(result)
@@ -935,14 +1093,17 @@ class CompactWindow(QMainWindow):
 
     def _init_game_preview(self):
         """Инициализация окна предпросмотра игры и панели иконок."""
+        logger.info("[GAME-PREVIEW] creating GamePreview...")
         from game_preview import GamePreview, StatusIcons
         region = self.regions[0] if self.regions else {"x": 0, "y": 0, "width": 800, "height": 450}
 
         # Окно предпросмотра игры
         self.game_preview = GamePreview(region=region)
+        logger.info("[GAME-PREVIEW] GamePreview created")
 
         # Плавающая панель иконок (отдельное окно, маленькое, в углу экрана)
         self.status_icons = StatusIcons()
+        logger.info("[GAME-PREVIEW] StatusIcons created")
         self.status_icons.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -1102,32 +1263,86 @@ class CompactWindow(QMainWindow):
         except Exception as e:
             logger.error(f"[TTS] set_voice failed: {e}")
 
+    # ── Голос персонажа (по имени говорящего из OCR) ──
+
+    def _update_person_panel(self, speaker):
+        """Обновляет панель «Персонаж» при новом имени из OCR."""
+        name = (speaker or "").strip() or None
+        if name == getattr(self, "_person_speaker", None) and \
+                self.person_voice_combo.count() > 0:
+            return  # имя не изменилось — combo уже актуален
+        self._person_speaker = name
+        self.person_label.setText(f"Персонаж: {name}" if name else "Персонаж: —")
+        self._fill_person_voice_combo(name)
+
+    def _fill_person_voice_combo(self, name):
+        combo = self.person_voice_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Основной голос", None)
+        for v in getattr(self, "_all_voices", []):
+            combo.addItem(v.get("name", v.get("code", "")), v.get("code", ""))
+        cur = self.tts.get_character_voice(name) if name else None
+        idx = 0
+        if cur:
+            for i in range(combo.count()):
+                if combo.itemData(i) == cur:
+                    idx = i
+                    break
+        combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        combo.setEnabled(bool(name))
+        combo.setToolTip(f"Голос для «{name}»" if name
+                         else "Озвучивается основным голосом")
+
+    def _on_person_voice_changed(self, _idx):
+        name = getattr(self, "_person_speaker", None)
+        if not name:
+            return
+        code = self.person_voice_combo.currentData()
+        try:
+            self.tts.set_character_voice(name, code)
+            self.status_label.setText(
+                f"Голос «{name}»: {self.person_voice_combo.currentText()}")
+        except Exception as e:
+            logger.error(f"[TTS] set_character_voice failed: {e}")
+
     # ═══════════════════════════════════════════════
     # ACTIONS
     # ═══════════════════════════════════════════════
     def _on_scan(self):
+        logger.info("[GUI] Scan button pressed")
         self.status_label.setText("Scanning...")
         self.btn_scan.setEnabled(False)
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
+        logger.info("[GUI] _do_scan thread started")
         try:
             import mss, time
             from PIL import Image
             regions = self.regions if self.regions else [{"x": 0, "y": 0, "width": 800, "height": 200}]
             r = regions[0]
+            logger.debug(f"[GUI] Capturing region: {r}")
             with mss.mss() as sct:
                 monitor = {"left": r["x"], "top": r["y"], "width": r["width"], "height": r["height"]}
                 shot = sct.grab(monitor)
                 img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+            logger.debug(f"[GUI] Captured image: {img.size}")
             self._pending_preview = img
             self._gui(lambda: self._show_preview(self._pending_preview))
             self._gui(lambda: self.status_label.setText("OCR processing..."))
             t0 = time.perf_counter()
+            # Регион кроем сами — сообщаем офсет, иначе рамки KOMA
+            # рисуются в локальных координатах кропа (выше/левее текста).
+            self.ocr.set_capture_origin(r["x"], r["y"])
             result = self.ocr.recognize(img)
             elapsed = time.perf_counter() - t0
             text = result[0] if isinstance(result, tuple) else str(result)
-            self._gui(lambda: self._on_text_detected(text))
+            logger.info(f"[GUI] OCR done in {elapsed:.1f}s: {text[:50]}...")
+            # force_speak=True: ручной Scan озвучивает ВСЕГДА (даже тот же
+            # текст и даже при включённом Live) — кнопка Scan = «скажи сейчас».
+            self._gui(lambda: self._on_text_detected(text, force_speak=True))
             self._gui(lambda: self.status_label.setText(f"Done in {elapsed:.1f}s | {len(text)} chars"))
         except Exception as e:
             logger.error(f"Scan error: {e}")
@@ -1135,21 +1350,90 @@ class CompactWindow(QMainWindow):
         finally:
             self._gui(lambda: self.btn_scan.setEnabled(True))
 
+    def _ensure_live_loop(self):
+        """Выделенный asyncio event loop для LiveScanner.
+
+        start()/stop() и TTS-стриминг — корутины. Без работающего loop'а
+        кнопка Live лишь создавала coroutine и ничего не запускала
+        («coroutine never awaited») — live-режим в компактном GUI не работал.
+        """
+        loop = getattr(self, "_live_loop", None)
+        if loop is not None and not loop.is_closed():
+            return loop
+        import asyncio
+        loop = asyncio.new_event_loop()
+        threading.Thread(target=loop.run_forever, name="LiveScannerLoop",
+                         daemon=True).start()
+        self._live_loop = loop
+        logger.info("[LIVE] Выделенный event loop запущен")
+        return loop
+
+    def _live_submit(self, coro):
+        """Поставить корутину сканера в его event loop."""
+        try:
+            import asyncio
+            loop = self._ensure_live_loop()
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        except Exception as e:
+            logger.error(f"[LIVE] Не удалось запустить корутину: {e}")
+
     def _on_live_toggle(self, checked):
+        logger.info(f"[GUI] Live toggle: checked={checked}")
         if checked:
-            self.scanner.start()
+            self._sync_ocr_region()   # страховка: regions[0] → ocr.region
+            self._live_submit(self.scanner.start())
             self.status_label.setText("Live mode ON")
             self.btn_live.setText(f"{ICON['live_off']} Stop")
         else:
-            self.scanner.stop()
+            self._live_submit(self.scanner.stop())
             self.status_label.setText("Live mode OFF")
             self.btn_live.setText(f"{ICON['live_on']} Live")
 
     def _on_stop_live(self):
-        self.scanner.stop()
+        logger.info("[GUI] Stop Live requested")
+        self._live_submit(self.scanner.stop())
         self.btn_live.setChecked(False)
         self.btn_live.setText(f"{ICON['live_on']} Live")
         self.status_label.setText("Live stopped")
+
+    # ═══════════════════════════════════════════════
+    # РАМКИ OCR (как в читалке KOMA / yomikai)
+    # ═══════════════════════════════════════════════
+
+    def _ensure_boxes_overlay(self):
+        ov = getattr(self, "_boxes_overlay", None)
+        if ov is None:
+            from koma_box_overlay import KomaBoxOverlay
+            ov = KomaBoxOverlay(ttl_sec=4.0)
+            self._boxes_overlay = ov
+        return ov
+
+    def _wire_ocr_hooks(self):
+        """Хуки OCRWrapper → GUI. Вызывать после КАЖДОГО создания обёртки
+        (init и смена движка — там она пересоздаётся)."""
+        if getattr(self, "ocr", None) is None:
+            return
+        # Придёт из фонового потока — маршалим в главный через сигнал.
+        self.ocr.on_boxes = lambda boxes: self._gui(
+            lambda b=boxes: self._on_ocr_boxes(b))
+
+    def _on_ocr_boxes(self, boxes):
+        if not self.settings.get("ocr.show_boxes", True):
+            return
+        try:
+            self._ensure_boxes_overlay().set_boxes(boxes)
+        except Exception as e:
+            logger.debug(f"[Boxes] overlay: {e}")
+
+    def _toggle_boxes_overlay(self, checked):
+        self.settings.set("ocr.show_boxes", bool(checked))
+        ov = getattr(self, "_boxes_overlay", None)
+        if checked:
+            self.status_label.setText("Рамки OCR: ON")
+        else:
+            if ov is not None:
+                ov.clear()
+            self.status_label.setText("Рамки OCR: OFF")
 
     # ═══════════════════════════════════════════════
     # AUTO-READ: реальное время — скан + сразу озвучка
@@ -1176,6 +1460,10 @@ class CompactWindow(QMainWindow):
 
         self._auto_read_active = True
         self._auto_read_last_text = ""
+        # Debounce: текст должен повториться 2 скана подряд, иначе
+        # озвучивались бы фрагменты постепенной печати диалога.
+        self._auto_read_pending = ""
+        self._auto_read_pending_count = 0
 
         # Визуальная индикация — кнопка "горит"
         self.btn_auto_read.setChecked(True)
@@ -1200,13 +1488,11 @@ class CompactWindow(QMainWindow):
             self.game_preview.show()
             self.game_preview.raise_()
 
-        # Запуск TTS стриминга
+        # Запуск TTS стриминга (в выделенном loop'е сканера; раньше блок был
+        # no-op — get_event_loop() в главном потоке Qt не даёт работающий loop)
         if hasattr(self, 'scanner') and self.scanner:
             try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(self.scanner.start_tts_streaming())
+                self._live_submit(self.scanner.start_tts_streaming())
             except Exception:
                 pass
 
@@ -1276,13 +1562,10 @@ class CompactWindow(QMainWindow):
             except Exception:
                 pass
 
-        # Остановка стриминга
+        # Остановка стриминга (в выделенном loop'е сканера)
         if hasattr(self, 'scanner') and self.scanner:
             try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(self.scanner.stop_tts_streaming())
+                self._live_submit(self.scanner.stop_tts_streaming())
             except Exception:
                 pass
 
@@ -1298,11 +1581,23 @@ class CompactWindow(QMainWindow):
         logger.info("[AUTO-READ] Остановлен")
 
     def _auto_read_tick(self):
-        """Один тик Auto-Read: захват экрана → GlensOCR → показ + озвучка нового текста."""
+        """тик Auto-Read: захват + OCR + перевод + озвучка.
+
+        Защита от накопления потоков: раньше каждый тик (интервал 500 мс)
+        порождал новый поток, даже если предыдущий скан ещё шёл. При
+        скане 1.5-4 c это давало 3-8 параллельных OCR — интерфейс
+        «зависал», а CPU грузился постоянно (и игра теряла FPS).
+        """
         if not self._auto_read_active:
             return
-
-        # Запускаем в фоновом потоке, чтобы не блокировать GUI
+        if getattr(self, "_auto_read_busy", False):
+            return    # предыдущий скан ещё идёт — не плодим потоки
+        # минимальный пауза между сканами, даже если таймер бьёт чаще
+        now = time.time()
+        if now - getattr(self, "_auto_read_last", 0.0) < self._auto_read_gap:
+            return
+        self._auto_read_last = now
+        self._auto_read_busy = True
         threading.Thread(target=self._auto_read_scan, daemon=True).start()
 
     def _auto_read_scan(self):
@@ -1317,6 +1612,8 @@ class CompactWindow(QMainWindow):
         """
         try:
             import mss, time
+            import re
+            from scanner import ScreenScanner
             from PIL import Image
             import numpy as np
 
@@ -1333,6 +1630,8 @@ class CompactWindow(QMainWindow):
                     monitor = {"left": r["x"], "top": r["y"], "width": r["width"], "height": r["height"]}
                     shot = sct.grab(monitor)
                     img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                # capture_region() выставил бы сам; для ручного кропа — явно:
+                self.ocr.set_capture_origin(r["x"], r["y"])
 
             if img is None:
                 return
@@ -1492,9 +1791,33 @@ class CompactWindow(QMainWindow):
             # ══════ ДЕДУПЛИКАЦИЯ ══════
 
             normalized = ' '.join(text.strip().lower().split())
-            if normalized == self._auto_read_last_text:
-                return
-            self._auto_read_last_text = normalized
+            # Не точное сравнение, а similarity без пунктуации: OCR
+            # нестабилен (score ~0.85), один кадр даёт slightly другой
+            # текст → точное == никогда не совпадало → повторная озвучка.
+            dedup_key = ' '.join(re.sub(r'[^\w\s]', ' ', normalized).split())
+
+            # Уже озвучивалось (или это обрезок уже озвученного кадра)?
+            if dedup_key and self._auto_read_last_text:
+                if ScreenScanner._similarity(dedup_key, self._auto_read_last_text) > 0.75:
+                    return
+                if len(dedup_key) >= 15 and dedup_key in self._auto_read_last_text:
+                    return
+
+            # Debounce: ждём стабилизации текста 2 скана подряд —
+            # иначе озвучивались бы фрагменты постепенной печати.
+            if dedup_key:
+                if (self._auto_read_pending
+                        and ScreenScanner._similarity(dedup_key, self._auto_read_pending) > 0.75):
+                    self._auto_read_pending_count += 1
+                else:
+                    self._auto_read_pending = dedup_key
+                    self._auto_read_pending_count = 0
+                if self._auto_read_pending_count < 1:
+                    return  # ждём подтверждения следующим сканом
+
+            self._auto_read_last_text = dedup_key or normalized
+            self._auto_read_pending = ""
+            self._auto_read_pending_count = 0
 
             # ✅ Текст распознан и починен
             self._gui(lambda: self.status_icons.pulse("recognize", 500))
@@ -1519,6 +1842,9 @@ class CompactWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"[AUTO-READ] Scan error: {e}")
+        finally:
+            # освобождаем защиту: следующий тик сможет запустить скан
+            self._auto_read_busy = False
 
     def _safe_speak(self, text):
         """Безопасная озвучка в отдельном потоке. Мигает 🎵 voice пока говорит.
@@ -1559,17 +1885,30 @@ class CompactWindow(QMainWindow):
     # ═══════════════════════════════════════════════
 
     def _on_speak(self):
-        text = self.result_text.toPlainText()
+        logger.info("[GUI] Speak button pressed")
+        # Ручная озвучка — без имени говорящего (префикс только для показа),
+        # но speaker передаём для выбора голоса персонажа (tts.characters).
+        text = getattr(self, "_last_clean_text", None) or self.result_text.toPlainText()
+        speaker = (getattr(self.ocr, "last_speaker", None)
+                   if getattr(self, "ocr", None) else None)
         if text:
+            logger.info(f"[GUI] Speaking text: {text[:50]}...")
             self._gui(lambda: self._update_tts_icon())
-            threading.Thread(target=lambda: self._speak_and_reset(text), daemon=True).start()
+            threading.Thread(target=lambda: self._speak_and_reset(text, speaker),
+                             daemon=True).start()
+        else:
+            logger.warning("[GUI] Speak pressed but no text to speak")
 
-    def _speak_and_reset(self, text):
+    def _speak_and_reset(self, text, speaker=None):
+        logger.info(f"[GUI] _speak_and_reset started for: {text[:50]}...")
         try:
             import asyncio
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(self.tts.speak(text))
+                # speaker → голос персонажа из tts.characters (если назначен);
+                # неизвестное имя → основной голос, ничего не ломается.
+                loop.run_until_complete(self.tts.speak(text, speaker=speaker))
+                logger.info("[GUI] _speak_and_reset completed")
             finally:
                 loop.close()
         except Exception as e:
@@ -1600,18 +1939,61 @@ class CompactWindow(QMainWindow):
             self.btn_stt.setText(f"{ICON['stt']} Start STT")
 
     def _toggle_stt(self, checked=False):
-        # Checkable active/passive toggle (no STT backend installed:
-        # vosk/speech_recognition not available, so this is a state switch).
+        """Start/Stop STT: потоковый faster-whisper (чанки + VAD).
+
+        Модель и цикл распознавания живут в фоновых потоках
+        (voice_translator), UI никогда не блокируется.
+        """
         try:
             self.btn_stt.blockSignals(True)
             self.btn_stt.setChecked(bool(checked))
         finally:
             self.btn_stt.blockSignals(False)
         self._set_stt_icon(bool(checked))
-        self.status_label.setText("STT ON — listening..." if checked else "STT OFF")
+        if checked:
+            self.status_label.setText("STT ON — загрузка модели в фоне...")
+            threading.Thread(target=self._start_stt, daemon=True).start()
+        else:
+            vt = getattr(self, "_vt", None)
+            if vt is not None:
+                try:
+                    vt.stop()
+                except Exception:
+                    logger.exception("[STT] stop failed")
+            self.status_label.setText("STT OFF")
+
+    def _start_stt(self):
+        """Фоновая инициализация STT (whisper грузится вне UI-потока)."""
+        try:
+            from voice_translator import VoiceTranslator
+            if getattr(self, "_vt", None) is None:
+                vt = VoiceTranslator(tts_engine=None, translator=None)
+                vt._model_name = "base"  # tiny плохо читает кириллицу
+                # Чистый STT: эхо-фильтр «язык речи == язык озвучки» здесь
+                # неуместен — озвучки нет, а русскую речь он бы отбрасывал.
+                vt._skip_own_lang = False
+                # on_heard приходит из STT-потока → прыгаем в UI через _gui
+                vt.on_heard = lambda text, lang, spk: self._gui(
+                    lambda: self._stt_append(text, lang, spk))
+                self._vt = vt
+            self._vt.start()
+            self._gui(lambda: self.status_label.setText("STT ON — listening..."))
+            logger.info("[STT] started (streaming chunks + VAD)")
+        except Exception as e:
+            logger.error(f"[STT] start failed: {e}", exc_info=True)
+            self._gui(lambda: self.status_label.setText(f"STT error: {e}"))
+
+    def _stt_append(self, text, lang, spk):
+        """Вывод распознанной реплики в панель STT (вызывается в UI-потоке)."""
+        try:
+            tag = " ".join(x for x in (lang, spk) if x)
+            self.stt_text.append((f"[{tag}] " if tag else "") + text)
+        except Exception:
+            logger.exception("[STT] append failed")
 
     def _on_translate(self):
-        text = self.result_text.toPlainText()
+        # Ручной перевод — чистым текстом (имена говорящих не переводим).
+        text = getattr(self, "_last_clean_text", None) or self.result_text.toPlainText()
         if text:
             threading.Thread(target=lambda: self._do_translate(text), daemon=True).start()
 
@@ -1643,13 +2025,86 @@ class CompactWindow(QMainWindow):
             cleaned.append(line.strip())
         return '\n'.join(cleaned)
 
-    def _on_text_detected(self, text):
+    def _on_text_detected(self, text, force_speak=False):
         if text:
-            self.result_text.setPlainText(text)
+            # Сохраняем очищенный текст (<имя:) — только для показа; на TTS и
+            # на переводы (без префикса переводчика) он не попадает.
+            self._last_clean_text = text
+            speaker = (getattr(self.ocr, "last_speaker", None)
+                       if getattr(self, "ocr", None) else None)
+            display = f"{speaker}: {text}" if speaker else text
+            live_on = (getattr(self, "scanner", None) is not None
+                       and getattr(self.scanner, "running", False))
+            if live_on:
+                # Live: текст дописывается в поле постепенно —
+                # «как будто нейронка печатает в прямом эфире».
+                self._set_text_animated(display)
+            else:
+                self.result_text.setPlainText(display)
+            self._update_person_panel(speaker)
             if self.auto_translate.isChecked():
                 self._do_translate(text)
             if self.kb_check.isChecked():
-                self.kb_widget.animate_text(text, delay_ms=25)
+                self.kb_widget.animate_text(display, delay_ms=25)
+            # Auto Speak: кроме ручного Scan (force_speak=True) звучит всегда -
+            # иначе live читает сам, и повтор того же текста молчит впустую.
+            # Без force_speak — только если НЕ live/auto-read (там озвучка
+            # идёт своим потоком из текста, который уже показан).
+            if getattr(self, "auto_speak", None) and self.auto_speak.isChecked():
+                auto_read_on = getattr(self, "_auto_read_active", False)
+                if force_speak or (not live_on and not auto_read_on):
+                    if force_speak and hasattr(self.tts, "force_stop"):
+                        try:
+                            self.tts.force_stop()
+                        except Exception:
+                            pass
+                    threading.Thread(
+                        target=lambda t=text, s=speaker:
+                            self._speak_and_reset(t, s),
+                        daemon=True).start()
+
+    def _set_text_animated(self, text):
+        """Live-показ: текст дописывается в поле постепенно (typing-эффект).
+
+        Дописывание (новый текст начинается со старого) — печатается
+        только хвост; полная смена — набор с нуля. Уже напечатанное
+        не перерисовывается (кадры live приходят с одним и тем же текстом).
+        """
+        try:
+            cur = self.result_text.toPlainText()
+        except Exception:
+            cur = ""
+        if text == cur:
+            return
+        if (getattr(self, "_typing_text", None) == text
+                and getattr(self, "_typing_timer", None) is not None
+                and self._typing_timer.isActive()):
+            return  # уже печатается именно этот текст
+        if text.startswith(cur) and len(text) > len(cur):
+            self._typing_pos = len(cur)          # продолжаем с хвоста
+        else:
+            self._typing_pos = 0                  # новая реплика — с нуля
+        self._typing_text = text
+        if getattr(self, "_typing_timer", None) is None:
+            from PyQt6.QtCore import QTimer
+            self._typing_timer = QTimer(self)
+            self._typing_timer.setInterval(15)
+            self._typing_timer.timeout.connect(self._typing_step)
+        if not self._typing_timer.isActive():
+            self._typing_timer.start()
+
+    def _typing_step(self):
+        text = getattr(self, "_typing_text", "") or ""
+        pos = min(getattr(self, "_typing_pos", 0) + 3, len(text))
+        self._typing_pos = pos
+        try:
+            self.result_text.setPlainText(text[:pos])
+            sb = self.result_text.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception:
+            pass
+        if pos >= len(text):
+            self._typing_timer.stop()
 
     def _show_preview(self, pil_img):
         from PyQt6.QtGui import QImage, QPixmap
@@ -1819,20 +2274,69 @@ class CompactWindow(QMainWindow):
             pass
 
     def closeEvent(self, event):
-        # Остановить Auto-Read перед закрытием
+        # Останавливаем Auto-Read
         if self._auto_read_active:
             self._stop_auto_read()
         self._cleanup_global_hotkeys()
-        if hasattr(self, 'scanner'):
-            self.scanner.stop()
-        if hasattr(self, 'tray_icon'):
-            self.tray_icon.hide()
+
+        # scanner.stop() — корутина. Подаём её в выделенный loop сканера,
+        # чтобы цикл сканирования реально остановился до выхода.
+        try:
+            if hasattr(self, "scanner") and self.scanner is not None:
+                import asyncio
+                co = self.scanner.stop()
+                if asyncio.iscoroutine(co):
+                    loop = getattr(self, "_live_loop", None)
+                    if loop is not None and loop.is_running():
+                        fut = asyncio.run_coroutine_threadsafe(co, loop)
+                        try:
+                            fut.result(timeout=3)
+                        except Exception:
+                            pass
+                        loop.call_soon_threadsafe(loop.stop)
+                    else:
+                        asyncio.run(co)
+        except Exception as e:
+            logger.debug(f"[close] scanner.stop: {e}")
+
+        # Оверлей рамок — отдельное top-level окно: гасим при выходе
+        if getattr(self, "_boxes_overlay", None) is not None:
+            try:
+                self._boxes_overlay.clear()
+                self._boxes_overlay.hide()
+            except Exception:
+                pass
+
+        if hasattr(self, "tray_icon"):
+            try:
+                self.tray_icon.hide()
+            except Exception:
+                pass
         try:
             if getattr(self, "_voice_float_lbl", None) is not None:
                 self._voice_float_lbl.hide()
         except Exception:
             pass
+
+        # ВАЖНО: оверлей и band — ОТДЕЛЬНЫЕ окна без родителя. Если их не
+        # закрыть, Qt считает, что открытое окно ещё есть, и процесс не
+        # завершается: окно закрыто, а python.exe продолжает висеть.
+        for attr in ("region_overlay", "_select_band", "game_preview"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.close()
+                    w.deleteLater()
+                except Exception:
+                    pass
+
         event.accept()
+        # подсказываем Qt, что выходить надо именно сейчас
+        try:
+            from PyQt6.QtWidgets import QApplication
+            QApplication.instance().quit()
+        except Exception:
+            pass
 
 
 def main():

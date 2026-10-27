@@ -186,6 +186,7 @@ class TTSEngine:
         self.cache_dir = Path("tts_cache")
         self.cache_dir.mkdir(exist_ok=True)
         self.audio_cache = {}
+        self._cache_bytes = 0
         self.cache_enabled = True
         self.is_playing = False
         # Метки фактического воспроизведения звука (для анти-эхо в STT)
@@ -229,6 +230,14 @@ class TTSEngine:
         self.profile_manager = VoiceProfileManager()
         self.active_profile = None
         self.show_builtin_voices = True  # flag to hide built-in list
+
+        # Голоса персонажей: имя говорящего (lower) → voice_code.
+        # Неизвестное имя (псевдоним, латиница) → None → основной голос:
+        # НИКОГДА не ломаем озвучку из-за неизвестного персонажа.
+        try:
+            self.character_voices = dict(self.settings.get("tts.characters", {}) or {})
+        except Exception:
+            self.character_voices = {}
 
         # Voice changer preset (None = no transformation)
         self.voice_preset = None  # e.g. "female", "robot", "child"
@@ -375,6 +384,61 @@ class TTSEngine:
     def get_role_rate(self, role: str) -> int:
         return self.role_settings.get(role, {}).get("rate", 0)
 
+    # Кэш синтезированных чанков: держим не всё, а последние и в пределах
+    # бюджета памяти. Раньше при переполнении кэш сбрасывался целиком —
+    # одна длинная реплика вытесняла все повторы, и их приходилось
+    # синтезировать заново.
+    AUDIO_CACHE_MAX_ITEMS = 60
+    AUDIO_CACHE_MAX_BYTES = 24 * 1024 * 1024  # ~24 МБ
+
+    def _cache_audio(self, key: str, data: bytes) -> None:
+        """Положить чанк в кэш, вытесняя самые старые по размеру и счёту."""
+        if not self.cache_enabled or not data:
+            return
+        self.audio_cache[key] = data
+        # Счётчик порядка: обычный dict упорядочен по вставке в Python 3.7+,
+        # поэтому «переставить» элемент в конце — значит сделать его свежим.
+        self.audio_cache[key] = self.audio_cache.pop(key)
+        self._cache_bytes = getattr(self, "_cache_bytes", 0) + len(data)
+        while (len(self.audio_cache) > self.AUDIO_CACHE_MAX_ITEMS
+               or self._cache_bytes > self.AUDIO_CACHE_MAX_BYTES):
+            if len(self.audio_cache) <= 1:
+                break
+            old_key = next(iter(self.audio_cache))
+            self._cache_bytes -= len(self.audio_cache.pop(old_key))
+
+    def clear_audio_cache(self) -> None:
+        """Полностью освободить кэш аудио."""
+        self.audio_cache.clear()
+        self._cache_bytes = 0
+
+    def _teratts_idle_unload(self, max_idle: float = 180.0) -> bool:
+        """Выгрузить локальную модель, если она давно не использовалась.
+
+        ONNX-сессии TeraTTS держат около 390 МБ. Пока идёт озвучка или
+        только что была озвучка — память нужна; после простоя веса
+        отпускаются, а уже готовые чанки в кэше остаются.
+        """
+        try:
+            if self.voice_type != "teratts":
+                return False
+            from teratts_engine import TeraTTSEngine
+            return TeraTTSEngine.get().unload_if_idle(max_idle)
+        except Exception:  # noqa: BLE001 — выгрузка не должна ломать озвучку
+            return False
+
+    def _warm_teratts(self) -> None:
+        """Фоново поднять локальную модель, чтобы озвучка не ждала загрузки."""
+        try:
+            if self.voice_type != "teratts":
+                return
+            from teratts_engine import TeraTTSEngine, is_installed
+            if not is_installed():
+                return
+            TeraTTSEngine.get()._load()
+        except Exception:  # noqa: BLE001
+            logger.debug("Фоновый прогрев TeraTTS не удался", exc_info=True)
+
     @staticmethod
     def _detect_text_lang(text: str) -> str:
         if not text:
@@ -400,6 +464,40 @@ class TTSEngine:
         }
         for short, full in abbr.items():
             text = re.sub(r'\b' + re.escape(short) + r'\b', full, text, flags=re.IGNORECASE)
+        # Единицы измерения после цифры: модель не знает сокращений
+        # («10-15 мин» звучало как «тысяча пятнадцать мин», «150г» —
+        # как буква «гэ»). Только после цифры — не трогаем слова.
+        units = [
+            (r'(?<=\d)\s*мин\b', ' минут'),
+            (r'(?<=\d)\s*сек\b', ' секунд'),
+            (r'(?<=\d)\s*кг\b', ' килограмм'),
+            (r'(?<=\d)\s*мл\b', ' миллилитров'),
+            (r'(?<=\d)\s*см\b', ' сантиметров'),
+            (r'(?<=\d)\s*км\b', ' километров'),
+            (r'(?<=\d)\s*г\b', ' грамм'),
+        ]
+        for pat, rep in units:
+            text = re.sub(pat, rep, text, flags=re.IGNORECASE)
+        return text
+
+    @staticmethod
+    def _expand_numeric_ranges(text: str) -> str:
+        """Диапазон «10-15» → «10 до 15».
+
+        Модель склеивает «10—15» в число 1015 («тысяча пятнадцать»).
+        Тире между цифрами — всегда диапазон; тире перед словом
+        («15 — к массе») не трогается (нужна цифра после тире).
+        """
+        if not text:
+            return text
+        return re.sub(r'(?<=\d)\s*[-–—]\s*(?=\d)', ' до ', text)
+
+    def _prepare_tts_text(self, text: str) -> str:
+        """Препроцессинг перед синтезом: диапазоны + сокращения."""
+        if not text:
+            return text
+        text = self._expand_numeric_ranges(text)
+        text = self._expand_abbreviations(text)
         return text
 
     async def generate_audio(self, text: str, role: str = None) -> bytes:
@@ -428,8 +526,7 @@ class TTSEngine:
                 if not result:
                     logger.warning(f"[generate_audio] Dual voice returned empty for: {text[:50]}...")
                 # Cache result
-                if result and self.cache_enabled:
-                    self.audio_cache[cache_key] = result
+                self._cache_audio(cache_key, result)
                 return self._apply_voice_changer(result)
 
             # Single voice with emotion + sentence-type prosody
@@ -444,11 +541,7 @@ class TTSEngine:
             if not result:
                 logger.warning(f"[generate_audio] Engine returned empty for: {text[:50]}... (voice={self.voice}, type={self.voice_type})")
             # --- Cache result ---
-            if result and self.cache_enabled:
-                # Limit cache to 50 items to prevent memory bloat
-                if len(self.audio_cache) > 50:
-                    self.audio_cache.clear()
-                self.audio_cache[cache_key] = result
+            self._cache_audio(cache_key, result)
             return self._apply_voice_changer(result)
         except Exception as e:
             logger.error(f"[generate_audio] Error: {e}")
@@ -571,29 +664,64 @@ class TTSEngine:
         need_rhvoice_style = (self.voice_type == "edge"
                               and role in self.RHVOICE_STYLE_ROLES and pitch < -15)
 
+        # Try primary engine
+        primary_result = b''
         if self.voice_type == "rhvoice":
-            result = await self._gen_rhvoice(text, rate, pitch)
-            if result:
-                return result
+            primary_result = await self._gen_rhvoice(text, rate, pitch)
         elif self.voice_type == "silero":
-            return await self._gen_silero(text, rate, pitch)
+            primary_result = await self._gen_silero(text, rate, pitch)
         elif self.voice_type == "persona":
-            return await self._gen_persona(text, rate, pitch, role)
+            primary_result = await self._gen_persona(text, rate, pitch, role)
+        elif self.voice_type == "teratts":
+            primary_result = await self._gen_teratts(text, rate, pitch)
+        elif self.voice_type == "sapi":
+            primary_result = await self._gen_sapi5(text, rate, pitch)
 
-        # edge (default) — always try Edge first
-        if self.voice_type in ("edge", "rhvoice"):
-            if need_rhvoice_style:
-                rh = await self._gen_rhvoice(text, rate, pitch)
-                if rh:
-                    return rh
-            edge = await self._gen_edge(text, rate, pitch)
-            if edge:
-                return edge
-            # Edge failed → last-resort RHVoice
-            fb = await self._gen_rhvoice(text, rate, pitch)
-            if fb:
-                return fb
+        if primary_result:
+            return primary_result
+
+        # Primary failed → try offline fallbacks in order
+        logger.debug(f"[TTS] Primary {self.voice_type} failed, trying offline fallbacks")
+        for fb_type, fb_voice in self._offline_fallback_chain():
+            if fb_type == "rhvoice":
+                old_voice = self.voice
+                self.voice = fb_voice
+                res = await self._gen_rhvoice(text, rate, pitch)
+                self.voice = old_voice
+            elif fb_type == "silero":
+                old_voice = self.voice
+                self.voice = fb_voice
+                res = await self._gen_silero(text, rate, pitch)
+                self.voice = old_voice
+            elif fb_type == "teratts":
+                old_voice = self.voice
+                self.voice = fb_voice
+                res = await self._gen_teratts(text, rate, pitch)
+                self.voice = old_voice
+            else:
+                continue
+            if res:
+                logger.info(f"[TTS] Fallback succeeded: {fb_type}:{fb_voice}")
+                return res
         return b''
+
+    def _offline_fallback_chain(self):
+        """Yield (engine_type, voice_code) for offline fallbacks based on current lang/gender."""
+        # Determine lang from voice or text (simplified: ru if voice contains ru)
+        lang = "ru" if "ru" in self.voice.lower() else "en"
+        gender = "female" if any(n in self.voice.lower() for n in ("svetlana", "dianna", "alena", "jenny", "kseniya", "elena")) else "male"
+        key = (lang, gender)
+        for code in self.OFFLINE_FALLBACKS.get(key, ()):
+            if code.startswith("silero:"):
+                yield ("silero", code)
+            elif code.startswith("rhvoice:"):
+                yield ("rhvoice", code)
+            elif code.startswith("teratts:"):
+                yield ("teratts", code)
+        # Also try defaults
+        for code in self.OFFLINE_DEFAULTS.get(key, ()):
+            if code.startswith("teratts:"):
+                yield ("teratts", code)
 
     # ═══════════════════════════════════════════════════════════
     # EDGE-TTS — separate method
@@ -691,6 +819,41 @@ class TTSEngine:
         return b''
 
     # ═══════════════════════════════════════════════════════════
+    # TeraTTS — офлайн на ONNX, 10 стилей, автоударения
+    # ═══════════════════════════════════════════════════════════
+
+    async def _gen_teratts(self, text: str, rate: int, pitch: int) -> bytes:
+        """Синтез через TeraTTS. Возвращает WAV-байты.
+
+        Синтез блокирующий и тяжёлый, поэтому уводим его в поток: иначе
+        заморозим интерфейс на всё время генерации. ``pitch`` движок не
+        поддерживает — он игнорируется, как и в Silero.
+        """
+        style = self.voice.split(":", 1)[1] if ":" in self.voice else "ru_f1"
+        lang = self._detect_text_lang(text)
+        # Русский голос → ВСЕГДА ru: строка из цифр/латиницы без
+        # кириллицы иначе уходит в en-тег и читается по-английски
+        # («2024» → «two thousand twenty four» вместо «две тысячи…»).
+        if "ru" in (self.voice or "").lower():
+            lang = "ru"
+        if lang not in ("ru", "en"):
+            lang = "ru"
+        try:
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(
+                None, self._teratts_sync, text, style, rate, lang)
+            return data
+        except Exception as e:
+            logger.warning(f"[TeraTTS] Ошибка синтеза: {e}")
+            return b''
+
+    @staticmethod
+    def _teratts_sync(text: str, style: str, rate: int, lang: str) -> bytes:
+        from teratts_engine import TeraTTSEngine
+        return TeraTTSEngine.get().synthesize(
+            text=text, voice=style, rate=rate, lang=lang)
+
+    # ═══════════════════════════════════════════════════════════
     # PERSONA — Edge-TTS with custom rate/pitch from PERSONA dict
     # ═══════════════════════════════════════════════════════════
 
@@ -743,19 +906,67 @@ class TTSEngine:
         return b''
 
     # ═══════════════════════════════════════════════════════════
+    # CHARACTER VOICES — голос по имени говорящего
+    # ═══════════════════════════════════════════════════════════
+
+    def get_character_voice(self, name: str):
+        """Голос персонажа или None (→ основной голос пользователя).
+
+        None для пустого/неизвестного имени — вызывающий обязан в этом
+        случае НЕ менять голос: псевдонимы и латинские имена не должны
+        ломать озвучку.
+        """
+        if not name or not self.character_voices:
+            return None
+        return self.character_voices.get(name.strip().lower())
+
+    def set_character_voice(self, name: str, voice_code: str):
+        """Назначить голос персонажу (voice_code=None → основной голос)."""
+        key = (name or "").strip().lower()
+        if not key:
+            return
+        if voice_code:
+            self.character_voices[key] = voice_code
+        else:
+            self.character_voices.pop(key, None)
+        try:
+            self.settings.set("tts.characters", dict(self.character_voices))
+            logger.info(f"[TTS] Голос персонажа «{name}»: {voice_code or 'основной'}")
+        except Exception as e:
+            logger.warning(f"[TTS] Не удалось сохранить tts.characters: {e}")
+
+    # ═══════════════════════════════════════════════════════════
     # PLAYBACK METHODS
     # ═══════════════════════════════════════════════════════════
 
-    async def speak(self, text: str, callback=None):
-        """Play text — uses streaming for Edge-TTS (starts playback before full download)."""
+    async def speak(self, text: str, callback=None, speaker: str = None):
+        """Play text — uses streaming for Edge-TTS (starts playback before full download).
+
+        speaker: имя говорящего (опционально). Если для персонажа назначен
+        голос в tts.characters — используется он; иначе текущий (основной).
+        Голос персонажа всегда восстанавливается в finally.
+        """
+        char_pair = None
         try:
             self.is_playing = True
+            # Голос персонажа; неизвестное имя (псевдоним/латиница) →
+            # get_character_voice вернёт None → работаем основным голосом.
+            char_voice = self.get_character_voice(speaker)
+            if char_voice and char_voice != self.voice:
+                char_pair = (self.voice, self.voice_type)
+                self.set_voice(char_voice)
+                logger.info(f"[speak] Голос персонажа «{speaker}» → {char_voice}")
+
             clean_text = re.sub(r'\s+', ' ', text).strip() if text else ""
             if not clean_text:
                 return
 
+            # Диапазоны («10-15» → «10 до 15») и сокращения («мин» → «минут») —
+            # ДО очистки: en/em dash ещё на месте, а «до» и «минут»
+            # переживут очистку (это буквы).
+            tts_text = self._prepare_tts_text(clean_text)
             # Strip special chars for TTS — keep only letters, digits, basic punctuation
-            tts_text = re.sub(r'[^\w\s.,!?;:\-\u0400-\u04FF\u0041-\u005A\u0061-\u007A\u3000-\u9FFF]', '', clean_text)
+            tts_text = re.sub(r'[^\w\s.,!?;:\-\u0400-\u04FF\u0041-\u005A\u0061-\u007A\u3000-\u9FFF]', '', tts_text)
             tts_text = re.sub(r'\s+', ' ', tts_text).strip()
             if not tts_text:
                 tts_text = clean_text
@@ -767,21 +978,40 @@ class TTSEngine:
                 await self._speak_edge_streaming(tts_text, callback)
                 return
 
-            # Non-streaming: generate all then play
-            audio_data = await self.generate_audio(tts_text)
-            if audio_data:
-                ext = ".wav" if self.voice_type in ("silero", "rhvoice") else ".mp3"
+            # Non-streaming: для ДЛИННОГО текста говорим по фрагментам —
+            # синтез всего текста перед play = долгое молчание («ручной
+            # — долго голос»). Первый фрагмент звучит раньше, остальные
+            # следом; громкость ровная (каждый фрагмент ≤ лимита модели).
+            parts = [tts_text]
+            if len(tts_text) > 260:
+                try:
+                    from teratts_engine import TeraTTSEngine
+                    parts = TeraTTSEngine._split_for_tts(tts_text, 260)
+                except Exception:
+                    parts = [tts_text]
+            ext = ".wav" if self.voice_type in ("silero", "rhvoice", "teratts") else ".mp3"
+            last = len(parts) - 1
+            for idx, part in enumerate(parts):
+                audio_data = await self.generate_audio(part)
+                if not audio_data:
+                    logger.error(f"[speak] Engine failed for: {part[:50]}")
+                    continue
                 uid = uuid.uuid4().hex[:12]
                 tmp = self.cache_dir / f"speak_{uid}{ext}"
                 tmp.write_bytes(audio_data)
-                await self._play_audio(str(tmp), callback=callback)
+                # callback — только после ПОСЛЕДНЕГО фрагмента.
+                await self._play_audio(str(tmp),
+                                       callback=callback if idx == last else None)
                 self._safe_unlink(tmp)
-            else:
-                logger.error(f"[speak] Engine failed for: {clean_text[:50]}")
 
         except Exception as e:
             logger.error(f"[speak] Error: {e}")
         finally:
+            # Всегда возвращаем голос пользователя (даже при ошибке) —
+            # иначе после неудачной озвучки персонажа TTS «залипает»
+            # на чужом голосе до перезапуска программы.
+            if char_pair:
+                self.voice, self.voice_type = char_pair
             self.is_playing = False
 
     async def speak_streaming(self, text: str, callback=None):
@@ -804,7 +1034,12 @@ class TTSEngine:
             self.is_playing = False
 
     async def _speak_edge_streaming(self, text: str, callback=None):
-        """Edge-TTS: download audio, then play via MCI (no MCI file-lock errors)."""
+        """Edge-TTS: download audio, then play via MCI (no MCI file-lock errors).
+
+        При ошибке (403/сеть) — тихо фолбэкаем на доступный ЛОКАЛЬНЫЙ движок,
+        не меняя сохранённый голос пользователя (восстанавливаем в finally).
+        После ошибки ставим cooldown 60с, чтобы не долбить Edge впустую.
+        """
         import edge_tts as _edge_tts
 
         voice = self.voice
@@ -813,6 +1048,15 @@ class TTSEngine:
 
         uid = uuid.uuid4().hex[:12]
         tmp_path = self.cache_dir / f"stream_{uid}.mp3"
+
+        # Cooldown: если Edge недавно падал (403) — сразу фолбэк, не тратим время.
+        cooldown_until = getattr(self, "_edge_cooldown_until", 0.0)
+        if time.time() < cooldown_until:
+            logger.debug("[Edge] cooldown active → offline fallback")
+            await self._speak_offline_fallback(text)
+            if callback:
+                callback()
+            return
 
         try:
             comm = _edge_tts.Communicate(text, voice, rate=rate_str, volume=vol_str)
@@ -827,6 +1071,9 @@ class TTSEngine:
                 await self._play_audio(str(tmp_path))
         except Exception as e:
             logger.error(f"[Edge streaming] Error: {e}")
+            # Edge недоступен — ставим cooldown и фолбэкаем на локальный
+            self._edge_cooldown_until = time.time() + 60.0
+            await self._speak_offline_fallback(text)
         finally:
             try:
                 if tmp_path.exists():
@@ -836,9 +1083,44 @@ class TTSEngine:
             if callback:
                 callback()
 
-    def _fallback_to_offline(self):
-        """Disabled — use only the configured voice."""
-        pass
+    async def _speak_offline_fallback(self, text: str):
+        """Озвучить доступным ЛОКАЛЬНЫМ движком (silero/rhvoice/teratts).
+
+        Не меняет сохранённый голос пользователя — восстанавливает в finally.
+        """
+        old_voice, old_type = self.voice, self.voice_type
+        try:
+            have = self._available_offline_codes()
+            # Определяем язык: кириллица в тексте ИЛИ русский
+            # пользовательский голос (строка из цифр без кириллицы —
+            # при ru-голосе всё равно читаем по-русски).
+            lang = "ru" if (re.search(r"[\u0400-\u04FF]", text)
+                            or "ru" in old_voice.lower()) else "en"
+            # Пол: по текущему голосу (Svetlana/Dianna/Alena → female)
+            gender = "female" if any(n in self.voice.lower() for n in ("svetlana", "dianna", "alena", "jenny")) else "male"
+            key = (lang, gender)
+            candidates = self.OFFLINE_FALLBACKS.get(key, ())
+            code = next((c for c in candidates if c in have), None)
+            if not code:
+                # запасной: первый вообще доступный локальный
+                code = next(iter(sorted(have)), None)
+            if not code:
+                logger.error("[Fallback] Локальных движков нет — молчим")
+                return
+            self.set_voice(code)
+            logger.warning(f"[Fallback] Edge403/cooldown → локальный голос: {code}")
+            audio = await self.generate_audio(text)
+            if audio:
+                # ext как в speak(): silero/rhvoice/teratts → .wav
+                ext = ".wav" if self.voice_type in ("silero", "rhvoice", "teratts") else ".mp3"
+                tmp = self.cache_dir / f"fallback_{uuid.uuid4().hex[:12]}{ext}"
+                tmp.write_bytes(audio)
+                await self._play_audio(str(tmp))
+                self._safe_unlink(tmp)
+            else:
+                logger.error("[Fallback] generate_audio вернул пусто")
+        finally:
+            self.voice, self.voice_type = old_voice, old_type
 
     async def speak_instant(self, text: str, callback=None):
         """Instant playback — generate and play."""
@@ -846,7 +1128,7 @@ class TTSEngine:
             self.is_playing = True
             audio_data = await self.generate_audio(text)
             if audio_data:
-                ext = ".wav" if self.voice_type in ("silero", "rhvoice") else ".mp3"
+                ext = ".wav" if self.voice_type in ("silero", "rhvoice", "teratts") else ".mp3"
                 uid = uuid.uuid4().hex[:12]
                 tmp = self.cache_dir / f"inst_{uid}{ext}"
                 tmp.write_bytes(audio_data)
@@ -896,7 +1178,11 @@ class TTSEngine:
             # знал, когда именно наш голос звучал (загрузка Edge-TTS идёт
             # ДО звука и занимает ~2-3 c).
             self.playback_started_at = time.time()
-            player.play(audio_path, wait=True)
+            # play(wait=True) — блокирующий MCI-вызов: в event loop
+            # замирал ВСЁ приложение на весь трек (строки live-очереди
+            # и скан «залипали»). В executor loop остаётся живым.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, player.play, audio_path, True)
             player.close()
             self.playback_ended_at = time.time()
             # Small delay for Windows to release file handle
@@ -1033,6 +1319,52 @@ class TTSEngine:
         "en-US-GuyNeural", "en-US-JennyNeural",
     }
 
+    # ── Офлайн-голоса по умолчанию ─────────────────────────────────────
+    # Пользователь просил, чтобы без явного выбора звучал локальный голос,
+    # а не облачный Edge. Подбираем офлайн-вариант по полу и языку;
+    # если офлайн-движков нет, остаётся Edge как раньше.
+    OFFLINE_DEFAULTS = {
+        ("ru", "male"): "teratts:ru_m5",
+        ("ru", "female"): "teratts:ru_f1",
+        ("en", "male"): "teratts:eng_m3",
+        ("en", "female"): "teratts:eng_f3",
+    }
+    # Запасные варианты, если основной движок не установлен.
+    OFFLINE_FALLBACKS = {
+        ("ru", "male"): ("silero:ruslan", "rhvoice:Pavel"),
+        ("ru", "female"): ("silero:kseniya", "rhvoice:Elena"),
+        ("en", "male"): (),           # локальных английских голосов нет
+        ("en", "female"): (),
+    }
+
+    def _available_offline_codes(self) -> set:
+        """Коды голосов, которые реально можно синтезировать без сети."""
+        return {v["code"] for v in self.EDGE_VOICES
+                if v.get("type") in ("teratts", "silero", "rhvoice")}
+
+    def default_voice_for(self, lang: str = "ru", gender: str = "male") -> str:
+        """Голос по умолчанию: сначала офлайн, при отсутствии — Edge.
+
+        Возвращает код голоса. Пользовательский выбор в настройках это не
+        трогает — функцию зовут только при первом запуске, когда значения
+        ещё нет в конфиге.
+        """
+        try:
+            if self.settings.get("tts.default_offline", True):
+                have = self._available_offline_codes()
+                key = (lang, gender)
+                code = self.OFFLINE_DEFAULTS.get(key)
+                if code and code in have:
+                    return code
+                for alt in self.OFFLINE_FALLBACKS.get(key, ()):
+                    if alt in have:
+                        return alt
+        except Exception:  # noqa: BLE001 — подбор голоса не критичен
+            logger.debug("Подбор офлайн-голоса не удался", exc_info=True)
+        ru = "ru-RU-DmitryNeural" if gender == "male" else "ru-RU-SvetlanaNeural"
+        en = "en-US-GuyNeural" if gender == "male" else "en-US-JennyNeural"
+        return ru if lang == "ru" else en
+
     def get_voices(self) -> List[dict]:
         """Get voice list. Offline first, then Edge (4 default or all), profiles last."""
         if not self.show_builtin_voices:
@@ -1048,8 +1380,9 @@ class TTSEngine:
             voices.append(v)
         if self.sapi_available:
             voices.extend(self._sapi_voices_cache)
-        # Sort: rhvoice > persona > silero > edge > profiles
-        priority = {"rhvoice": 1, "persona": 2, "silero": 3, "edge": 4, "profile": 5}
+        # Sort: rhvoice > persona > silero > teratts > edge > profiles
+        priority = {"rhvoice": 1, "persona": 2, "silero": 3, "teratts": 4,
+                    "edge": 5, "profile": 6}
         voices.sort(key=lambda v: priority.get(v.get("type", "edge"), 5))
         # Add profiles at the end
         for p in self.profile_manager.get_all():
@@ -1074,6 +1407,8 @@ class TTSEngine:
             self.voice_type = "silero"
         elif voice_code.startswith("persona:"):
             self.voice_type = "persona"
+        elif voice_code.startswith("teratts:"):
+            self.voice_type = "teratts"
         else:
             self.voice_type = "sapi"
 
@@ -1181,14 +1516,23 @@ class TTSEngine:
         except Exception:
             known_personas = []
 
+        # TeraTTS — офлайн на ONNX, появляется только если модель скачана
+        try:
+            from teratts_engine import available_voice_dicts
+            known_teratts = available_voice_dicts()
+        except Exception as e:
+            logger.warning(f"TeraTTS недоступен: {e}")
+            known_teratts = []
+
         existing_codes = {v["code"] for v in TTSEngine.EDGE_VOICES}
-        for v in known_rhvoice + known_silero + known_personas:
+        for v in known_rhvoice + known_silero + known_personas + known_teratts:
             if v["code"] not in existing_codes:
                 TTSEngine.EDGE_VOICES.append(v)
         logger.info(f"[Voices] Registered: {len(known_rhvoice)} RHVoice"
                     f" ({'available' if rhvoice_available else 'NOT available'}), "
                     f"{len(known_silero)} Silero ({'available' if silero_available else 'NOT available'}), "
-                    f"{len(known_personas)} Persona")
+                    f"{len(known_personas)} Persona, "
+                    f"{len(known_teratts)} TeraTTS")
 
     def _init_rhvoice(self):
         """Initialize RHVoice via SAPI5 (voices installed as Windows SAPI5)."""
@@ -1343,7 +1687,7 @@ class TTSEngine:
                 file_path = Path(output_path)
             else:
                 uid = uuid.uuid4().hex[:12]
-                ext = ".wav" if self.voice_type in ("silero", "rhvoice") else ".mp3"
+                ext = ".wav" if self.voice_type in ("silero", "rhvoice", "teratts") else ".mp3"
                 file_path = self.cache_dir / f"tts_{uid}{ext}"
             file_path.write_bytes(audio_data)
             return str(file_path)
